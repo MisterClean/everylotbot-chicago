@@ -15,27 +15,22 @@ A bot that posts images of every property lot in Chicago to Bluesky and/or Twitt
 
 ```mermaid
 graph TD
-    subgraph Full Refresh [refresh_data.py]
-        A1[Chicago Data Portal] -->|Bulk CSV Download| B1[Data Processing]
-        B1 -->|Reset & Store| C1[DuckDB Database]
+    CDP[Cook County Data Portal] --> DI[data_ingest.py]
+    GAPI[Google APIs] --> EL[everylot.py]
+    SMP[Social Media Platforms]
+    
+    subgraph Data Processing
+        DI --> |Fetch data<br/>Sort by PIN14<br/>Deduplicate| DB[SQLite Database]
+        EL --> |Image fetching<br/>Address lookup<br/>Camera angles| DB
     end
-
-    subgraph Daily Update [run_daily_update.py]
-        A2[Chicago Data Portal] -->|API Updates| B2[Data Processing]
-        B2 -->|Append New| C2[DuckDB Database]
-        C2 -->|Query| D2[Analytics]
-        D2 -->|Generate| E2[Visualizations]
-        E2 -->|Post| F2[Bluesky]
+    
+    subgraph Database
+        DB --> |Property records<br/>Platform-specific<br/>posting status| BOT[bot.py]
     end
-
-    subgraph Core Components
-        G[Google Street View API] -->|Images| H[Image Processing]
-        H -->|Processed Images| I[Social Media Posts]
-        C1 -.->|Data Source| J[Bot Logic]
-        C2 -.->|Data Source| J
-        J -->|Coordinate| I
-        I -->|Post| K[Bluesky]
-        I -->|Post| L[Twitter]
+    
+    subgraph Bot Logic
+        BOT --> |Main logic<br/>Coordination| SM[Social Modules]
+        SM --> |bluesky.py<br/>twitter.py| SMP
     end
 ```
 
