@@ -60,15 +60,17 @@ def main():
         logger.error('Neither Bluesky nor Twitter is enabled')
         return
 
-    # Compose the post text
-    status_text = el.print_format.format(**el.lot)
-    logger.info(f"Post text: {status_text}")
+    # Compose the post data with sanitized address
+    post_data = el.compose()
+    logger.info(f"Post text: {post_data['status']}")
 
     if not args.dry_run:
         if enable_bluesky:
             try:
                 bluesky = BlueskyPoster(logger=logger)
-                post_id = bluesky.post(status_text, image)
+                # Get clean address for ALT text
+                clean_address = el.sanitize_address(el.lot['address'])
+                post_id = bluesky.post(post_data['status'], image, pin10=el.lot['id'], clean_address=clean_address)
                 el.mark_as_posted('bluesky', post_id)
                 logger.info("Posted to Bluesky")
             except Exception as e:
@@ -78,10 +80,10 @@ def main():
             try:
                 twitter = TwitterPoster(logger=logger)
                 post_id = twitter.post(
-                    status_text, 
+                    post_data['status'], 
                     image,
-                    lat=el.lot.get('lat'),
-                    lon=el.lot.get('lon')
+                    lat=post_data['lat'],
+                    lon=post_data['long']
                 )
                 el.mark_as_posted('twitter', post_id)
                 logger.info("Posted to Twitter")

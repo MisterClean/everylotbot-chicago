@@ -79,6 +79,8 @@ def create_local_db(records, db_path="cook_county_lots.db"):
     """
     Creates or overwrites the local SQLite DB with a 'lots' table
     unique by pin10. The 'id' column = pin10.
+    If START_PIN10 is set in environment variables, marks all pins up to
+    and including that PIN as '1' in posted_bluesky column.
     """
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
@@ -108,6 +110,18 @@ def create_local_db(records, db_path="cook_county_lots.db"):
         final_address = f"{prop_address}, {prop_city}, {prop_state} {prop_zip}".strip(", ")
 
         c.execute(insert_sql, (pin10, final_address, 0.0, 0.0))
+
+    # If START_PIN10 is set, mark all pins up to and including it as posted
+    start_pin = os.getenv('START_PIN10')
+    if start_pin:
+        print(f"\nMarking all pins up to and including {start_pin} as posted...")
+        c.execute("""
+            UPDATE lots 
+            SET posted_bluesky = '1' 
+            WHERE CAST(id AS INTEGER) <= CAST(? AS INTEGER)
+        """, (start_pin,))
+        rows_marked = c.execute("SELECT COUNT(*) FROM lots WHERE posted_bluesky = '1'").fetchone()[0]
+        print(f"Marked {rows_marked:,d} pins as posted")
 
     conn.commit()
     conn.close()

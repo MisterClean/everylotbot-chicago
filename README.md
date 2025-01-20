@@ -137,10 +137,26 @@ ENABLE_TWITTER=false
 ENABLE_BLUESKY=true
 
 # Optional settings
-START_PIN10=           # Start from this PIN10
+START_PIN10=           # Start from this PIN10 (see "Starting Point Behavior" below)
 SEARCH_FORMAT="{address}, {city} {state}"
 PRINT_FORMAT="{address}"
 DATABASE_PATH=cook_county_lots.db
+
+# Starting Point Behavior
+When START_PIN10 is set:
+1. During initial data import (data_ingest.py):
+   - All PINs up to and including START_PIN10 are marked as posted ('1')
+   - This effectively skips these properties when the bot runs
+2. During bot operation:
+   - If START_PIN10 is not yet posted, bot starts with that PIN
+   - If START_PIN10 is already posted, bot starts with the next unposted PIN
+3. After successful posts:
+   - The posted_bluesky column stores the web URL of the post
+   - Format: https://bsky.app/profile/[handle]/post/[id]
+
+# Camera settings
+STREETVIEW_PITCH=-11.55  # Camera angle (default: -10)
+STREETVIEW_ZOOM=1        # Zoom level (default: 0.8)
 ```
 
 ## Running Automatically
@@ -207,7 +223,25 @@ The SQLite database (`cook_county_lots.db`) contains a single table `lots` with 
 - `lat` (REAL): Latitude coordinate
 - `lon` (REAL): Longitude coordinate
 - `posted_twitter` (TEXT): Twitter post ID or '0' if not posted
-- `posted_bluesky` (TEXT): Bluesky post ID or '0' if not posted
+- `posted_bluesky` (TEXT): Either:
+  - '0': Not posted
+  - '1': Marked as posted (for pins before START_PIN10)
+  - URL: Web link to the Bluesky post (e.g., https://bsky.app/profile/handle/post/id)
+
+### Image ALT Text Format
+
+The bot uses a standardized format for image ALT text to ensure accessibility and consistent property identification:
+
+```
+Google Streetview of the property with PIN10 [PIN10]: [clean address]
+```
+
+For example:
+```
+Google Streetview of the property with PIN10 1234567890: 2023 North Damen Avenue
+```
+
+The address is automatically cleaned and formatted (e.g., "N" → "North", "AVE" → "Avenue") for better readability.
 
 ### Development Guidelines
 
