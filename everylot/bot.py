@@ -60,16 +60,18 @@ def main():
         logger.error('Neither Bluesky nor Twitter is enabled')
         return
 
-    # Compose the post text
-    status_text = el.print_format.format(**el.lot)
-    logger.info(f"Post text: {status_text}")
+    # Compose the post data with sanitized address
+    post_data = el.compose()
+    logger.info(f"Post text: {post_data['status']}")
 
     if not args.dry_run:
         if enable_bluesky:
             try:
                 bluesky = BlueskyPoster(logger=logger)
-                post_id = bluesky.post(status_text, image)
-                post_ids.append(f"bsky:{post_id}")
+                # Get clean address for ALT text
+                clean_address = el.sanitize_address(el.lot['address'])
+                post_id = bluesky.post(post_data['status'], image, pin10=el.lot['id'], clean_address=clean_address)
+                el.mark_as_posted('bluesky', post_id)
                 logger.info("Posted to Bluesky")
             except Exception as e:
                 logger.error(f"Failed to post to Bluesky: {e}")
@@ -78,20 +80,15 @@ def main():
             try:
                 twitter = TwitterPoster(logger=logger)
                 post_id = twitter.post(
-                    status_text, 
+                    post_data['status'], 
                     image,
-                    lat=el.lot.get('lat'),
-                    lon=el.lot.get('lon')
+                    lat=post_data['lat'],
+                    lon=post_data['long']
                 )
-                post_ids.append(f"twtr:{post_id}")
+                el.mark_as_posted('twitter', post_id)
                 logger.info("Posted to Twitter")
             except Exception as e:
                 logger.error(f"Failed to post to Twitter: {e}")
-
-        # Mark as tweeted with all post IDs
-        if post_ids:
-            el.mark_as_tweeted(','.join(post_ids))
-            logger.info("Marked as posted")
 
 if __name__ == '__main__':
     main()

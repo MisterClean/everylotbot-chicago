@@ -8,9 +8,10 @@ import sqlite3
 import argparse
 from dotenv import load_dotenv
 
-def fetch_cook_county_rows(year='2023', city='CHICAGO'):
+def fetch_cook_county_rows(year='2023', city='CHICAGO', batch_size=50000):
     """
     Fetch raw rows from Cook County SODA (CSV) for the given tax year and city.
+    Uses pagination to fetch all records, with a maximum of 50,000 records per page.
     """
     url = "https://datacatalog.cookcountyil.gov/resource/3723-97qp.csv"
     token = os.getenv("CHICAGO_DATA_PORTAL_TOKEN")
@@ -20,23 +21,44 @@ def fetch_cook_county_rows(year='2023', city='CHICAGO'):
     headers = {
         "X-App-Token": token
     }
-    params = {
-        "$query": f"""SELECT pin, pin10, year, prop_address_full,
-                     prop_address_city_name, prop_address_state, prop_address_zipcode_1,
-                     mail_address_name, mail_address_full, mail_address_city_name,
-                     mail_address_state, mail_address_zipcode_1
-                     WHERE (year IN ('{year}'))
-                       AND caseless_one_of(prop_address_city_name, '{city}', '{city.title()}')
-                     ORDER BY pin ASC"""
-    }
-    r = requests.get(url, headers=headers, params=params)
-    r.raise_for_status()
+    
+    all_rows = []
+    offset = 0
+    
+    while True:
+        params = {
+            "$query": f"""SELECT pin, pin10, year, prop_address_full,
+                         prop_address_city_name, prop_address_state, prop_address_zipcode_1,
+                         mail_address_name, mail_address_full, mail_address_city_name,
+                         mail_address_state, mail_address_zipcode_1
+                         WHERE (year IN ('{year}'))
+                           AND caseless_one_of(prop_address_city_name, '{city}', '{city.title()}')
+                         ORDER BY pin ASC
+                         LIMIT {batch_size}
+                         OFFSET {offset}"""
+        }
+        
+        print(f"Fetching records {offset} to {offset + batch_size}...")
+        r = requests.get(url, headers=headers, params=params)
+        r.raise_for_status()
 
-    # Parse CSV
-    f = StringIO(r.text)
-    reader = csv.DictReader(f)
-    rows = list(reader)
-    return rows
+        # Parse CSV
+        f = StringIO(r.text)
+        reader = csv.DictReader(f)
+        batch = list(reader)
+        
+        if not batch:  # No more records
+            break
+            
+        all_rows.extend(batch)
+        offset += batch_size
+        
+        print(f"Fetched {len(batch)} records in this batch")
+        
+        if len(batch) < batch_size:  # Last page
+            break
+    
+    return all_rows
 
 def transform_rows_to_unique_pin10(rows):
     """
@@ -57,6 +79,8 @@ def create_local_db(records, db_path="cook_county_lots.db"):
     """
     Creates or overwrites the local SQLite DB with a 'lots' table
     unique by pin10. The 'id' column = pin10.
+    If START_PIN10 is set in environment variables, marks all pins up to
+    and including that PIN as '1' in posted_bluesky column.
     """
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
@@ -68,7 +92,8 @@ def create_local_db(records, db_path="cook_county_lots.db"):
         address TEXT,
         lat REAL,
         lon REAL,
-        tweeted TEXT DEFAULT '0'
+        posted_twitter TEXT DEFAULT '0',
+        posted_bluesky TEXT DEFAULT '0'
     )
     """)
 
@@ -86,6 +111,18 @@ def create_local_db(records, db_path="cook_county_lots.db"):
 
         c.execute(insert_sql, (pin10, final_address, 0.0, 0.0))
 
+    # If START_PIN10 is set, mark all pins up to and including it as posted
+    start_pin = os.getenv('START_PIN10')
+    if start_pin:
+        print(f"\nMarking all pins up to and including {start_pin} as posted...")
+        c.execute("""
+            UPDATE lots 
+            SET posted_bluesky = '1' 
+            WHERE CAST(id AS INTEGER) <= CAST(? AS INTEGER)
+        """, (start_pin,))
+        rows_marked = c.execute("SELECT COUNT(*) FROM lots WHERE posted_bluesky = '1'").fetchone()[0]
+        print(f"Marked {rows_marked:,d} pins as posted")
+
     conn.commit()
     conn.close()
 
@@ -100,14 +137,15 @@ def main():
 
     try:
         print(f"Fetching Cook County data for {args.city} ({args.year})...")
+        print("This may take a while as we paginate through all records...")
         rows = fetch_cook_county_rows(args.year, args.city)
-        print(f"Found {len(rows)} total records")
+        print(f"\nFetched {len(rows):,d} total records")
 
-        print("Transforming to unique PIN10 records...")
+        print("\nTransforming to unique PIN10 records...")
         unique_records = transform_rows_to_unique_pin10(rows)
-        print(f"Reduced to {len(unique_records)} unique PIN10 records")
+        print(f"Reduced to {len(unique_records):,d} unique PIN10 records")
 
-        print(f"Creating local database at {args.db}...")
+        print(f"\nCreating local database at {args.db}...")
         create_local_db(unique_records, args.db)
         print("Database created successfully!")
 

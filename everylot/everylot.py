@@ -8,8 +8,8 @@ import os
 NEXT_LOT_QUERY = """
     SELECT *
     FROM lots
-    WHERE id >= ?
-    AND tweeted = '0'
+    WHERE id > ?
+    AND posted_{} = '0'
     ORDER BY id ASC
     LIMIT 1;
 """
@@ -39,8 +39,8 @@ class EveryLot:
         """
         self.logger = kwargs.get('logger', logging.getLogger('everylot'))
 
-        # Set address formats
-        self.search_format = search_format or os.getenv('SEARCH_FORMAT', '{address}, {city} {state}')
+        # Set address formats - default to just address since city/state are constant
+        self.search_format = search_format or os.getenv('SEARCH_FORMAT', '{address}, CHICAGO, IL')
         self.print_format = print_format or os.getenv('PRINT_FORMAT', '{address}')
 
         self.logger.debug('Search format: %s', self.search_format)
@@ -55,8 +55,43 @@ class EveryLot:
             # Get specific PIN10
             cursor = self.conn.execute(SPECIFIC_LOT_QUERY, (id_,))
         else:
-            # Get next untweeted PIN10
-            cursor = self.conn.execute(NEXT_LOT_QUERY, ('0',))
+            # Determine which platform we're posting to
+            platform = 'bluesky' if os.getenv('ENABLE_BLUESKY', 'true').lower() == 'true' else 'twitter'
+            
+            # Check if we have any posted lots
+            cursor = self.conn.execute(f"""
+                SELECT id FROM lots 
+                WHERE posted_{platform} != '0'
+                ORDER BY id DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            
+            # Get the last posted lot's ID
+            if row:
+                start_id = row['id']
+            else:
+                # If no lots have been posted yet, check if START_PIN10 lot is already posted
+                start_id = os.getenv('START_PIN10', '0')
+                if start_id != '0':
+                    cursor = self.conn.execute(f"""
+                        SELECT posted_{platform} FROM lots 
+                        WHERE id = ?
+                    """, (start_id,))
+                    row = cursor.fetchone()
+                    # If START_PIN10 lot is already posted, use it as start_id to find next
+                    # If not posted, get that specific lot
+                    if row and row[0] != '0':
+                        start_id = start_id  # Use as starting point for next lot
+                    else:
+                        cursor = self.conn.execute(SPECIFIC_LOT_QUERY, (start_id,))
+                        row = cursor.fetchone()
+                        if row:
+                            self.lot = dict(row)
+                            return
+            
+            # Get the next unposted lot after start_id
+            cursor = self.conn.execute(NEXT_LOT_QUERY.format(platform), (start_id,))
 
         row = cursor.fetchone()
         self.lot = dict(row) if row else None
@@ -104,7 +139,12 @@ class EveryLot:
             "size": "1000x1000"
         }
 
-        params['fov'], params['pitch'] = self.aim_camera()
+        fov, _ = self.aim_camera()  # Get FOV but use configured pitch
+        params.update({
+            'fov': fov,
+            'pitch': float(os.getenv('STREETVIEW_PITCH', -10)),
+            'zoom': float(os.getenv('STREETVIEW_ZOOM', 0.8))
+        })
 
         try:
             r = requests.get(SVAPI, params=params)
@@ -125,7 +165,8 @@ class EveryLot:
     def streetviewable_location(self, key):
         """
         Determine the best location for Street View image.
-        Checks if Google-geocoded address is nearby, otherwise uses lat/lon.
+        Uses the formatted address with hardcoded city/state since this is Chicago-specific.
+        Only falls back to lat/lon if address formatting completely fails.
         
         Args:
             key (str): Google Geocoding API key
@@ -133,48 +174,86 @@ class EveryLot:
         Returns:
             str: Location string for Street View API
         """
-        # Try to format address from lot data
         try:
-            address = self.search_format.format(**self.lot)
-        except KeyError:
-            self.logger.warning('Could not format address, using lat/lon')
-            return f"{self.lot['lat']},{self.lot['lon']}"
+            # Get the address and ensure it's not empty/None
+            address = self.lot.get('address')
+            if not address:
+                raise ValueError('No address available')
+                
+            # Format with hardcoded city/state since this is Chicago-specific
+            location = f"{address}, CHICAGO, IL"
+            self.logger.debug('Using formatted address for Street View: %s', location)
+            return location
+            
+        except (KeyError, ValueError) as e:
+            # Only use lat/lon if we have valid coordinates
+            lat = self.lot.get('lat', 0.0)
+            lon = self.lot.get('lon', 0.0)
+            if lat == 0.0 and lon == 0.0:
+                raise ValueError(f"No valid location data available: {str(e)}")
+            
+            self.logger.warning('Could not use address (%s), using lat/lon: %f,%f', str(e), lat, lon)
+            return f"{lat},{lon}"
 
-        # Check if we have coordinates to validate against
-        try:
-            d = 0.007  # ~0.5 mile radius
-            bounds = {
-                'min_lat': self.lot['lat'] - d,
-                'max_lat': self.lot['lat'] + d,
-                'min_lon': self.lot['lon'] - d,
-                'max_lon': self.lot['lon'] + d
-            }
-        except KeyError:
-            self.logger.info('No coordinates for validation. Using address directly.')
+    def sanitize_address(self, address):
+        """
+        Convert address components into a clean, readable format.
+        Example: '2023 N DAMEN AVE' -> '2023 North Damen Avenue'
+        
+        Args:
+            address (str): Raw address string
+            
+        Returns:
+            str: Sanitized address string
+        """
+        if not address:
             return address
 
-        # Geocode the address
-        try:
-            r = requests.get(GCAPI, params={"address": address, "key": key})
-            r.raise_for_status()
-            
-            result = r.json()
-            if not result.get('results'):
-                raise ValueError('No geocoding results found')
+        # Split address into components
+        parts = address.strip().split(',')[0].split()  # Take first part before comma
+        if not parts:
+            return address
 
-            loc = result['results'][0]['geometry']['location']
+        # Direction mapping
+        directions = {
+            'N': 'North',
+            'S': 'South',
+            'E': 'East',
+            'W': 'West'
+        }
 
-            # Check if geocoded location is within bounds
-            if (bounds['min_lon'] <= loc['lng'] <= bounds['max_lon'] and
-                bounds['min_lat'] <= loc['lat'] <= bounds['max_lat']):
-                self.logger.debug('Using formatted address for Street View')
-                return address
-            else:
-                raise ValueError('Geocoded location outside expected bounds')
+        # Street type mapping
+        street_types = {
+            'AVE': 'Avenue',
+            'ST': 'Street',
+            'BLVD': 'Boulevard',
+            'RD': 'Road',
+            'DR': 'Drive',
+            'CT': 'Court',
+            'PL': 'Place',
+            'TER': 'Terrace',
+            'LN': 'Lane',
+            'WAY': 'Way',
+            'CIR': 'Circle',
+            'PKY': 'Parkway',
+            'SQ': 'Square'
+        }
 
-        except Exception as e:
-            self.logger.info('Geocoding failed (%s), using stored coordinates', str(e))
-            return f"{self.lot['lat']},{self.lot['lon']}"
+        # Process each part
+        result = []
+        for i, part in enumerate(parts):
+            part = part.strip()
+            if i == 0:  # Street number
+                result.append(part)
+            elif part in directions:  # Direction
+                result.append(directions[part])
+            elif part in street_types:  # Street type
+                result.append(street_types[part])
+                break  # Stop processing after street type
+            else:  # Street name
+                result.append(part.capitalize())
+
+        return ' '.join(result)
 
     def compose(self, media_id_string=None):
         """
@@ -186,30 +265,39 @@ class EveryLot:
         Returns:
             dict: Post parameters including status text and location
         """
-        # Format the status text
-        status = self.print_format.format(**self.lot)
+        # Get the sanitized address
+        sanitized_address = self.sanitize_address(self.lot.get('address', ''))
         
-        # Build the post data
-        post_data = {
+        # Create post data with sanitized address
+        post_data = dict(self.lot)
+        post_data['address'] = sanitized_address
+        
+        # Format the status text using sanitized address
+        status = self.print_format.format(**post_data)
+        
+        # Build the final post data
+        result = {
             "status": status,
             "lat": self.lot.get('lat', 0.0),
             "long": self.lot.get('lon', 0.0),
         }
         
         if media_id_string:
-            post_data["media_ids"] = [media_id_string]
+            result["media_ids"] = [media_id_string]
             
-        return post_data
+        return result
 
-    def mark_as_tweeted(self, post_id):
+    def mark_as_posted(self, platform, post_id):
         """
-        Mark the current lot as posted.
+        Mark the current lot as posted for a specific platform.
         
         Args:
-            post_id (str): ID or comma-separated IDs of the posts
+            platform (str): Platform name ('twitter' or 'bluesky')
+            post_id (str): ID of the post
         """
+        column = f"posted_{platform.lower()}"
         self.conn.execute(
-            "UPDATE lots SET tweeted = ? WHERE id = ?",
+            f"UPDATE lots SET {column} = ? WHERE id = ?",
             (post_id, self.lot['id'])
         )
         self.conn.commit()

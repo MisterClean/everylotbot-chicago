@@ -101,7 +101,7 @@ class TestDataIngest:
         # Check table structure
         cursor.execute("PRAGMA table_info(lots)")
         columns = [row[1] for row in cursor.fetchall()]
-        expected_columns = ['id', 'address', 'lat', 'lon', 'tweeted']
+        expected_columns = ['id', 'address', 'lat', 'lon', 'posted_twitter', 'posted_bluesky']
         assert all(col in columns for col in expected_columns)
         
         # Check record count

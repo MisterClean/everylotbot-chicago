@@ -19,17 +19,18 @@ def test_db_path(tmp_path):
             address TEXT,
             lat REAL,
             lon REAL,
-            tweeted TEXT DEFAULT '0',
+            posted_twitter TEXT DEFAULT '0',
+            posted_bluesky TEXT DEFAULT '0',
             floors INTEGER
         )
     """)
     
     test_data = [
-        ('1407115016', '123 Main St', 41.8781, -87.6298, '0', 2),
-        ('1407115017', '125 Main St', 41.8782, -87.6299, '0', 3),
+        ('1407115016', '123 Main St', 41.8781, -87.6298, '0', '0', 2),
+        ('1407115017', '125 Main St', 41.8782, -87.6299, '0', '0', 3),
     ]
     c.executemany(
-        "INSERT INTO lots (id, address, lat, lon, tweeted, floors) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO lots (id, address, lat, lon, posted_twitter, posted_bluesky, floors) VALUES (?, ?, ?, ?, ?, ?, ?)",
         test_data
     )
     
@@ -104,11 +105,12 @@ class TestBot:
         # Verify database update
         conn = sqlite3.connect(test_db_path)
         c = conn.cursor()
-        c.execute("SELECT tweeted FROM lots WHERE id = '1407115016'")
-        tweeted_value = c.fetchone()[0]
+        c.execute("SELECT posted_twitter, posted_bluesky FROM lots WHERE id = '1407115016'")
+        posted_values = c.fetchone()
         conn.close()
         
-        assert "bsky:bsky_post_uri,twtr:12345" in tweeted_value
+        assert posted_values[0] == "12345"  # Twitter post ID
+        assert posted_values[1] == "bsky_post_uri"  # Bluesky post URI
         assert "Posted to Bluesky" in caplog.text
         assert "Posted to Twitter" in caplog.text
 
@@ -158,11 +160,12 @@ class TestBot:
         # Verify database wasn't updated
         conn = sqlite3.connect(test_db_path)
         c = conn.cursor()
-        c.execute("SELECT tweeted FROM lots WHERE id = '1407115016'")
-        tweeted_value = c.fetchone()[0]
+        c.execute("SELECT posted_twitter, posted_bluesky FROM lots WHERE id = '1407115016'")
+        posted_values = c.fetchone()
         conn.close()
         
-        assert tweeted_value == '0'
+        assert posted_values[0] == '0'  # Twitter not posted
+        assert posted_values[1] == '0'  # Bluesky not posted
 
     def test_main_no_lots_found(self, test_db_path, mock_env, mock_dependencies, caplog):
         """Test handling when no lots are found"""

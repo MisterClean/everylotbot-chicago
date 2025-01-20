@@ -26,13 +26,15 @@ class BlueskyPoster:
             self.logger.error(f"Failed to login to Bluesky: {str(e)}")
             raise
 
-    def post(self, status_text, image_data=None):
+    def post(self, status_text, image_data=None, pin10=None, clean_address=None):
         """
         Post to Bluesky with optional image.
         
         Args:
             status_text (str): The text content to post
             image_data (bytes-like object): Optional image data to upload
+            pin10 (str): The PIN10 identifier for the property
+            clean_address (str): The sanitized address of the property
             
         Returns:
             str: The URI of the created post
@@ -49,21 +51,31 @@ class BlueskyPoster:
 
             if image_data:
                 # Upload the image blob
-                upload_resp = self.client.com.atproto.repo.upload_blob(image_data, "image/jpeg")
+                upload_resp = self.client.com.atproto.repo.upload_blob(image_data)
                 
                 # Add image to the post
                 record["record"]["embed"] = {
                     "$type": "app.bsky.embed.images",
                     "images": [{
                         "image": upload_resp["blob"],
-                        "alt": "Property photo"
+                        "alt": f"Google Streetview of the property with PIN10 {pin10}: {clean_address}"
                     }]
                 }
 
             # Create the post
-            resp = self.client.com.atproto.repo.create_record(**record)
-            self.logger.debug(f"Successfully posted to Bluesky: {resp['uri']}")
-            return resp["uri"]
+            resp = self.client.com.atproto.repo.create_record(data=record)
+            uri = resp["uri"]
+            # Convert AT Protocol URI to web URL
+            # at://did:plc:xxx/app.bsky.feed.post/zzz -> https://bsky.app/profile/did:plc:xxx/post/zzz
+            try:
+                did = uri.split("/")[2]
+                post_id = uri.split("/")[-1]
+                web_url = f"https://bsky.app/profile/{did}/post/{post_id}"
+                self.logger.debug(f"Successfully posted to Bluesky: {web_url}")
+                return web_url
+            except Exception as e:
+                self.logger.warning(f"Failed to convert URI to web URL: {str(e)}")
+                return uri  # Fall back to original URI if conversion fails
 
         except Exception as e:
             self.logger.error(f"Failed to post to Bluesky: {str(e)}")

@@ -13,36 +13,26 @@ A bot that posts images of every property lot in Chicago to Bluesky and/or Twitt
 
 ## Architecture
 
+```mermaid
+graph TD
+    CDP[Cook County Data Portal] --> DI[data_ingest.py]
+    GAPI[Google APIs] --> EL[everylot.py]
+    SMP[Social Media Platforms]
+    
+    subgraph Data Processing
+        DI --> |Fetch data<br/>Sort by PIN14<br/>Deduplicate| DB[SQLite Database]
+        EL --> |Image fetching<br/>Address lookup<br/>Camera angles| DB
+    end
+    
+    subgraph Database
+        DB --> |Property records<br/>Platform-specific<br/>posting status| BOT[bot.py]
+    end
+    
+    subgraph Bot Logic
+        BOT --> |Main logic<br/>Coordination| SM[Social Modules]
+        SM --> |bluesky.py<br/>twitter.py| SMP
+    end
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  Cook County    │     │   Google APIs    │     │  Social Media    │
-│   Data Portal   │     │                  │     │   Platforms      │
-└────────┬────────┘     └────────┬─────────┘     └────────┬─────────┘
-         │                       │                         │
-         ▼                       ▼                         │
-┌─────────────────┐     ┌──────────────────┐             │
-│  data_ingest.py │     │   everylot.py    │             │
-│                 │     │                   │             │
-│ - Fetch data    │     │ - Image fetching  │             │
-│ - Sort by PIN14 │     │ - Address lookup  │             │
-│ - Deduplicate   │     │ - Camera angles   │             │
-└────────┬────────┘     └────────┬─────────┘             │
-         │                       │                         │
-         ▼                       ▼                         │
-┌──────────────────────────────────────────┐             │
-│              SQLite Database             │             │
-│                                         │             │
-│ - Property records                      │             │
-│ - Posting status tracking               │             │
-└────────────────────┬───────────────────┘             │
-                     │                                  │
-                     ▼                                  ▼
-              ┌─────────────────┐            ┌──────────────────┐
-              │     bot.py      │            │  Social Modules  │
-              │                 │            │                  │
-              │ - Main logic    ├───────────►│ - bluesky.py    │
-              │ - Coordination  │            │ - twitter.py     │
-              └─────────────────┘            └──────────────────┘
 
 Configuration (.env):
 ├── API Credentials
@@ -56,7 +46,6 @@ Data Flow:
 3. bot.py coordinates image fetching and posting
 4. everylot.py handles Street View interaction
 5. Social modules manage platform-specific posting
-```
 
 ## Setup
 
@@ -136,10 +125,26 @@ ENABLE_TWITTER=false
 ENABLE_BLUESKY=true
 
 # Optional settings
-START_PIN10=           # Start from this PIN10
+START_PIN10=           # Start from this PIN10 (see "Starting Point Behavior" below)
 SEARCH_FORMAT="{address}, {city} {state}"
 PRINT_FORMAT="{address}"
 DATABASE_PATH=cook_county_lots.db
+
+# Starting Point Behavior
+When START_PIN10 is set:
+1. During initial data import (data_ingest.py):
+   - All PINs up to and including START_PIN10 are marked as posted ('1')
+   - This effectively skips these properties when the bot runs
+2. During bot operation:
+   - If START_PIN10 is not yet posted, bot starts with that PIN
+   - If START_PIN10 is already posted, bot starts with the next unposted PIN
+3. After successful posts:
+   - The posted_bluesky column stores the web URL of the post
+   - Format: https://bsky.app/profile/[handle]/post/[id]
+
+# Camera settings
+STREETVIEW_PITCH=-11.55  # Camera angle (default: -10)
+STREETVIEW_ZOOM=1        # Zoom level (default: 0.8)
 ```
 
 ## Running Automatically
@@ -196,6 +201,35 @@ pytest -s
 ```
 
 Test coverage reports will show which lines of code are covered by tests.
+
+### Database Schema
+
+The SQLite database (`cook_county_lots.db`) contains a single table `lots` with the following schema:
+
+- `id` (TEXT): Primary key, the PIN10 identifier
+- `address` (TEXT): Full property address
+- `lat` (REAL): Latitude coordinate
+- `lon` (REAL): Longitude coordinate
+- `posted_twitter` (TEXT): Twitter post ID or '0' if not posted
+- `posted_bluesky` (TEXT): Either:
+  - '0': Not posted
+  - '1': Marked as posted (for pins before START_PIN10)
+  - URL: Web link to the Bluesky post (e.g., https://bsky.app/profile/handle/post/id)
+
+### Image ALT Text Format
+
+The bot uses a standardized format for image ALT text to ensure accessibility and consistent property identification:
+
+```
+Google Streetview of the property with PIN10 [PIN10]: [clean address]
+```
+
+For example:
+```
+Google Streetview of the property with PIN10 1234567890: 2023 North Damen Avenue
+```
+
+The address is automatically cleaned and formatted (e.g., "N" → "North", "AVE" → "Avenue") for better readability.
 
 ### Development Guidelines
 
