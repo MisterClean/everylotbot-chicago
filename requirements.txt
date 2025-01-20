@@ -6,9 +6,6 @@ python-dotenv>=0.21.0
 atproto>=0.0.31
 tweepy>=4.12.0
 
-# Database
-sqlite3  # Usually included with Python
-
 # Argument parsing and utilities
 argparse  # Usually included with Python
 
