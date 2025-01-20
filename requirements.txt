@@ -1,0 +1,22 @@
+# Core dependencies
+requests>=2.28.0
+python-dotenv>=0.21.0
+
+# Social media APIs
+atproto>=0.0.31
+tweepy>=4.12.0
+
+# Database
+sqlite3  # Usually included with Python
+
+# Argument parsing and utilities
+argparse  # Usually included with Python
+
+# For legacy compatibility (optional)
+pyyaml>=6.0.0  # For reading bots.yaml if needed
+
+# Testing dependencies
+pytest>=7.3.1
+pytest-cov>=4.1.0
+responses>=0.23.1  # For mocking HTTP requests
+pytest-mock>=3.10.0
