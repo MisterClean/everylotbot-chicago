@@ -13,37 +13,31 @@ A bot that posts images of every property lot in Chicago to Bluesky and/or Twitt
 
 ## Architecture
 
+```mermaid
+graph TD
+    subgraph Full Refresh [refresh_data.py]
+        A1[Chicago Data Portal] -->|Bulk CSV Download| B1[Data Processing]
+        B1 -->|Reset & Store| C1[DuckDB Database]
+    end
+
+    subgraph Daily Update [run_daily_update.py]
+        A2[Chicago Data Portal] -->|API Updates| B2[Data Processing]
+        B2 -->|Append New| C2[DuckDB Database]
+        C2 -->|Query| D2[Analytics]
+        D2 -->|Generate| E2[Visualizations]
+        E2 -->|Post| F2[Bluesky]
+    end
+
+    subgraph Core Components
+        G[Google Street View API] -->|Images| H[Image Processing]
+        H -->|Processed Images| I[Social Media Posts]
+        C1 -.->|Data Source| J[Bot Logic]
+        C2 -.->|Data Source| J
+        J -->|Coordinate| I
+        I -->|Post| K[Bluesky]
+        I -->|Post| L[Twitter]
+    end
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  Cook County    │     │   Google APIs    │     │  Social Media    │
-│   Data Portal   │     │                  │     │   Platforms      │
-└────────┬────────┘     └────────┬─────────┘     └────────┬─────────┘
-         │                       │                         │
-         ▼                       ▼                         │
-┌─────────────────┐     ┌──────────────────┐             │
-│  data_ingest.py │     │   everylot.py    │             │
-│                 │     │                   │             │
-│ - Fetch data    │     │ - Image fetching  │             │
-│ - Sort by PIN14 │     │ - Address lookup  │             │
-│ - Deduplicate   │     │ - Camera angles   │             │
-└────────┬────────┘     └────────┬─────────┘             │
-         │                       │                         │
-         ▼                       ▼                         │
-┌──────────────────────────────────────────┐             │
-│              SQLite Database             │             │
-│                                         │             │
-│ - Property records                      │             │
-│ - Platform-specific posting status      │             │
-│   (Twitter and Bluesky)                 │             │
-└────────────────────┬───────────────────┘             │
-                     │                                  │
-                     ▼                                  ▼
-              ┌─────────────────┐            ┌──────────────────┐
-              │     bot.py      │            │  Social Modules  │
-              │                 │            │                  │
-              │ - Main logic    ├───────────►│ - bluesky.py    │
-              │ - Coordination  │            │ - twitter.py     │
-              └─────────────────┘            └──────────────────┘
 
 Configuration (.env):
 ├── API Credentials
@@ -57,7 +51,6 @@ Data Flow:
 3. bot.py coordinates image fetching and posting
 4. everylot.py handles Street View interaction
 5. Social modules manage platform-specific posting
-```
 
 ## Setup
 
