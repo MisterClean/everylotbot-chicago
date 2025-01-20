@@ -33,7 +33,8 @@ A bot that posts images of every property lot in Chicago to Bluesky and/or Twitt
 │              SQLite Database             │             │
 │                                         │             │
 │ - Property records                      │             │
-│ - Posting status tracking               │             │
+│ - Platform-specific posting status      │             │
+│   (Twitter and Bluesky)                 │             │
 └────────────────────┬───────────────────┘             │
                      │                                  │
                      ▼                                  ▼
@@ -196,6 +197,17 @@ pytest -s
 ```
 
 Test coverage reports will show which lines of code are covered by tests.
+
+### Database Schema
+
+The SQLite database (`cook_county_lots.db`) contains a single table `lots` with the following schema:
+
+- `id` (TEXT): Primary key, the PIN10 identifier
+- `address` (TEXT): Full property address
+- `lat` (REAL): Latitude coordinate
+- `lon` (REAL): Longitude coordinate
+- `posted_twitter` (TEXT): Twitter post ID or '0' if not posted
+- `posted_bluesky` (TEXT): Bluesky post ID or '0' if not posted
 
 ### Development Guidelines
 

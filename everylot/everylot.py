@@ -9,7 +9,11 @@ NEXT_LOT_QUERY = """
     SELECT *
     FROM lots
     WHERE id >= ?
-    AND tweeted = '0'
+    AND (
+        (posted_twitter = '0' AND posted_bluesky = '0')
+        OR (posted_twitter = '0' AND ? = 'twitter')
+        OR (posted_bluesky = '0' AND ? = 'bluesky')
+    )
     ORDER BY id ASC
     LIMIT 1;
 """
@@ -201,15 +205,17 @@ class EveryLot:
             
         return post_data
 
-    def mark_as_tweeted(self, post_id):
+    def mark_as_posted(self, platform, post_id):
         """
-        Mark the current lot as posted.
+        Mark the current lot as posted for a specific platform.
         
         Args:
-            post_id (str): ID or comma-separated IDs of the posts
+            platform (str): Platform name ('twitter' or 'bluesky')
+            post_id (str): ID of the post
         """
+        column = f"posted_{platform.lower()}"
         self.conn.execute(
-            "UPDATE lots SET tweeted = ? WHERE id = ?",
+            f"UPDATE lots SET {column} = ? WHERE id = ?",
             (post_id, self.lot['id'])
         )
         self.conn.commit()

@@ -69,7 +69,7 @@ def main():
             try:
                 bluesky = BlueskyPoster(logger=logger)
                 post_id = bluesky.post(status_text, image)
-                post_ids.append(f"bsky:{post_id}")
+                el.mark_as_posted('bluesky', post_id)
                 logger.info("Posted to Bluesky")
             except Exception as e:
                 logger.error(f"Failed to post to Bluesky: {e}")
@@ -83,15 +83,10 @@ def main():
                     lat=el.lot.get('lat'),
                     lon=el.lot.get('lon')
                 )
-                post_ids.append(f"twtr:{post_id}")
+                el.mark_as_posted('twitter', post_id)
                 logger.info("Posted to Twitter")
             except Exception as e:
                 logger.error(f"Failed to post to Twitter: {e}")
-
-        # Mark as tweeted with all post IDs
-        if post_ids:
-            el.mark_as_tweeted(','.join(post_ids))
-            logger.info("Marked as posted")
 
 if __name__ == '__main__':
     main()

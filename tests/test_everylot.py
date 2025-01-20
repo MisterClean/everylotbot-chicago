@@ -20,19 +20,20 @@ def test_db_path(tmp_path):
             address TEXT,
             lat REAL,
             lon REAL,
-            tweeted TEXT DEFAULT '0',
+            posted_twitter TEXT DEFAULT '0',
+            posted_bluesky TEXT DEFAULT '0',
             floors INTEGER
         )
     """)
     
     # Insert test data
     test_data = [
-        ('1407115016', '123 Main St', 41.8781, -87.6298, '0', 2),
-        ('1407115017', '125 Main St', 41.8782, -87.6299, '0', 3),
-        ('1407115018', '127 Main St', 41.8783, -87.6300, '1', 4),
+        ('1407115016', '123 Main St', 41.8781, -87.6298, '0', '0', 2),
+        ('1407115017', '125 Main St', 41.8782, -87.6299, '0', '0', 3),
+        ('1407115018', '127 Main St', 41.8783, -87.6300, 'twt123', 'bsky123', 4),
     ]
     c.executemany(
-        "INSERT INTO lots (id, address, lat, lon, tweeted, floors) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO lots (id, address, lat, lon, posted_twitter, posted_bluesky, floors) VALUES (?, ?, ?, ?, ?, ?, ?)",
         test_data
     )
     
@@ -54,7 +55,8 @@ class TestEveryLot:
         assert el.lot is not None
         assert el.lot['id'] == '1407115016'
         assert el.lot['address'] == '123 Main St'
-        assert el.lot['tweeted'] == '0'
+        assert el.lot['posted_twitter'] == '0'
+        assert el.lot['posted_bluesky'] == '0'
 
     def test_initialization_specific_id(self, test_db_path):
         """Test initialization with specific ID"""
@@ -170,21 +172,26 @@ class TestEveryLot:
         assert post_data["long"] == -87.6298
         assert post_data["media_ids"] == ["test_media_id"]
 
-    def test_mark_as_tweeted(self, test_db_path):
-        """Test marking a lot as tweeted"""
+    def test_mark_as_posted(self, test_db_path):
+        """Test marking a lot as posted for specific platforms"""
         el = EveryLot(test_db_path)
         original_id = el.lot['id']
         
-        el.mark_as_tweeted("test_post_id")
+        # Test Twitter posting
+        el.mark_as_posted("twitter", "twt123")
         
-        # Verify database update
+        # Test Bluesky posting
+        el.mark_as_posted("bluesky", "bsky123")
+        
+        # Verify database updates
         conn = sqlite3.connect(test_db_path)
         c = conn.cursor()
-        c.execute("SELECT tweeted FROM lots WHERE id = ?", (original_id,))
-        tweeted_value = c.fetchone()[0]
+        c.execute("SELECT posted_twitter, posted_bluesky FROM lots WHERE id = ?", (original_id,))
+        posted_values = c.fetchone()
         conn.close()
         
-        assert tweeted_value == "test_post_id"
+        assert posted_values[0] == "twt123"  # Twitter post ID
+        assert posted_values[1] == "bsky123"  # Bluesky post URI
 
     def test_custom_format_strings(self, test_db_path):
         """Test custom search and print format strings"""
