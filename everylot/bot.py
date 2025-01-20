@@ -3,10 +3,12 @@ import argparse
 import logging
 import os
 from dotenv import load_dotenv
-from . import __version__ as version
+### from . import __version__ as version
 from .everylot import EveryLot
 from .bluesky import BlueskyPoster
 from .twitter import TwitterPoster
+
+version = '0.3.1'
 
 def main():
     load_dotenv()
