@@ -19,7 +19,7 @@
     "ingest": "node dist/src/cli/ingest.js"
   },
   "dependencies": {
-    "@atproto/api": "^0.20.34",
+    "@atproto/api": "^0.20.42",
     "@atproto/common-web": "^0.5.10",
     "dotenv": "^17.2.1",
     "zod": "^4.0.17"

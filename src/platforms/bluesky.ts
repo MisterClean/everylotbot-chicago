@@ -1,4 +1,4 @@
-import { AtpAgent, type AtpSessionData } from "@atproto/api";
+import { Agent, AppBskyFeedPost, CredentialSession, type AtpSessionData } from "@atproto/api";
 import { TID } from "@atproto/common-web";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -39,15 +39,20 @@ function isRecordNotFound(error: unknown): boolean {
 
 export class BlueskyPublisher implements Publisher {
   readonly platform = "bluesky" as const;
-  private readonly agent: AtpAgent;
+  private readonly agent: Agent;
+  private readonly session: CredentialSession;
 
   constructor(private readonly config: NonNullable<AppConfig["bluesky"]>) {
-    this.agent = new AtpAgent({
-      service: config.service,
-      persistSession: (_event, session) => {
+    this.session = new CredentialSession(
+      new URL(config.service),
+      undefined,
+      (_event, session) => {
         if (session !== undefined) this.persistSession(session);
       }
-    });
+    );
+    // CredentialSession is the documented Agent session manager. Its published
+    // type currently conflicts with exactOptionalPropertyTypes on `did`.
+    this.agent = new Agent(this.session as unknown as ConstructorParameters<typeof Agent>[0]);
   }
 
   private persistSession(session: AtpSessionData): void {
@@ -60,18 +65,18 @@ export class BlueskyPublisher implements Publisher {
   private async authenticate(): Promise<void> {
     try {
       const stored = JSON.parse(readFileSync(this.config.sessionPath, "utf8")) as AtpSessionData;
-      await this.agent.resumeSession(stored);
+      await this.session.resumeSession(stored);
       return;
     } catch {
       // A missing, expired, or corrupt session falls back to a fresh login.
     }
-    await this.agent.login({ identifier: this.config.identifier, password: this.config.password });
-    if (this.agent.session !== undefined) this.persistSession(this.agent.session);
+    await this.session.login({ identifier: this.config.identifier, password: this.config.password });
+    if (this.session.session !== undefined) this.persistSession(this.session.session);
   }
 
   async publish(_lot: Lot, post: ComposedPost, image: Uint8Array, deliveryKey?: string): Promise<PublishResult> {
     await this.authenticate();
-    const did = this.agent.session?.did;
+    const did = this.agent.did;
     if (did === undefined) throw new PublishError("Bluesky session did not contain a DID", false);
     if (deliveryKey === undefined || !isBlueskyRecordKey(deliveryKey)) {
       throw new PublishError("Bluesky delivery requires a valid TID record key", false);
@@ -97,10 +102,13 @@ export class BlueskyPublisher implements Publisher {
         $type: "app.bsky.embed.images",
         images: [{ image: upload.data.blob, alt: post.alt }]
       }
-    };
+    } satisfies AppBskyFeedPost.Record;
+
+    const validation = AppBskyFeedPost.validateRecord(record);
+    if (!validation.success) throw new PublishError("Generated Bluesky post did not pass schema validation", false);
 
     try {
-      const result = await this.agent.com.atproto.repo.putRecord({ repo: did, collection, rkey, record });
+      const result = await this.agent.com.atproto.repo.createRecord({ repo: did, collection, rkey, record, validate: true });
       return { ref: publicUrl(result.data.uri) };
     } catch (error) {
       throw new PublishError("Bluesky record write failed with an uncertain outcome", true, { cause: error });
