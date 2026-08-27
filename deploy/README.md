@@ -73,6 +73,7 @@ The deployer:
 - applies candidate migrations only to a disposable shadow copy;
 - rejects removed or incompatibly changed tables, indexes, and columns;
 - runs candidate audit and dry-run commands without network access;
+- removes the disposable shadow after successful validation;
 - atomically pins `/etc/everylotbot-image.env` to the exact digest;
 - preserves the database backup and deployment metadata;
 - keeps the current and previous EveryLot images;

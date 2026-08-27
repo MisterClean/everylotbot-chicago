@@ -236,6 +236,8 @@ docker run "${container_args[@]}" "$candidate_ref" \
 docker run "${container_args[@]}" "$candidate_ref" \
   node dist/src/cli/post-next.js --database "/shadow/${shadow_database##*/}" --dry-run
 
+rm --force -- "$shadow_database"
+
 write_image_pointer() {
   local image_ref=$1
   pointer_temp="$(mktemp "${IMAGE_ENV_FILE}.XXXXXX")"
@@ -256,7 +258,6 @@ metadata_file="${DEPLOYMENT_DIRECTORY}/${deployed_at}.env"
   printf 'DIGEST=%s\n' "$candidate_digest"
   printf 'PREVIOUS_IMAGE=%s\n' "$previous_ref"
   printf 'DATABASE_BACKUP=%s\n' "$backup_database"
-  printf 'SHADOW_DATABASE=%s\n' "$shadow_database"
 } >"$metadata_file"
 chmod 0640 "$metadata_file"
 
