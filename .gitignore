@@ -5,13 +5,7 @@ dist
 node_modules
 coverage
 *.tgz
-
-*.pyc
-
-*.egg
-.eggs
-*.egg-info
-
+var/
 
 *.zip
 *.cpg
@@ -22,5 +16,6 @@ coverage
 *.shp.xml
 
 *.env
+*.db
 *.db-wal
 *.db-shm

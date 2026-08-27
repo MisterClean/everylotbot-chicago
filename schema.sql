@@ -1,0 +1,8 @@
+CREATE TABLE lots (
+  id TEXT PRIMARY KEY,
+  address TEXT NOT NULL DEFAULT '',
+  lat REAL NOT NULL DEFAULT 0,
+  lon REAL NOT NULL DEFAULT 0,
+  posted_twitter TEXT NOT NULL DEFAULT '0',
+  posted_bluesky TEXT NOT NULL DEFAULT '0'
+);

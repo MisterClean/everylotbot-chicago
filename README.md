@@ -1,124 +1,104 @@
 # EveryLot Chicago
 
-EveryLot Chicago posts a Google Street View image of each Cook County property lot to Bluesky, in ascending PIN10 order. The production bot runs on an AWS Lightsail instance every 15 minutes during its configured posting hours.
+EveryLot Chicago is a TypeScript bot that posts Google Street View images of Cook County parcels to Bluesky in ascending PIN10 order.
 
-The repository now contains a TypeScript replacement for the original Python application. Python remains present solely for production rollback until the TypeScript service completes its observation period.
-
-## Production safety contract
-
-The database is the durable production state. The bot finds the largest confirmed platform-specific PIN10 and selects the next pending row above it. It intentionally does **not** fill pending rows below that high-water mark: production began at PIN10 `1431213018`, leaving 188,087 earlier rows deliberately skipped.
-
-The rewrite preserves the legacy `lots` schema and continues storing public post references in `posted_bluesky` or `posted_twitter`. This allows immediate rollback to Python. New migrations are additive and provide run history, delivery reconciliation, and a database lease.
+The application uses SQLite for parcel data and durable delivery state. It supports safe retries, deterministic Bluesky record keys, persisted sessions, dry runs, and addressless parcels backed by Cook County parcel centroids.
 
 ## Requirements
 
-- Node.js 24 LTS
+- Node.js 24
 - npm
-- The existing SQLite database
-- Google Street View API key
-- Bluesky handle and app password
+- SQLite 3
+- A Cook County Open Data app token
+- A Google Street View Static API key
+- A Bluesky account and app password
 
-Install and verify:
+## Setup
+
+Install dependencies and create a local configuration file:
 
 ```bash
 npm ci
+cp .env.example .env
+```
+
+Create an empty parcel database from the included schema:
+
+```bash
+sqlite3 cook_county_lots.db < schema.sql
+```
+
+Fill in `.env`, then build and import parcel addresses:
+
+```bash
+npm run build
+npm run ingest -- --year 2023 --city CHICAGO
+npm run enrich-centroids
+```
+
+The importer stages and validates Cook County data before updating `lots`. It preserves posting state and does not replace an existing address with a blank source address. Centroid enrichment updates only unposted parcels without usable addresses and leaves addresses and posting state unchanged.
+
+## Configuration
+
+The application reads configuration from environment variables and an optional `.env` file. See [.env.example](.env.example) for the full list.
+
+Required for Bluesky posting:
+
+```dotenv
+ENABLE_BLUESKY=true
+ENABLE_TWITTER=false
+CHICAGO_DATA_PORTAL_TOKEN=...
+GOOGLE_API_KEY=...
+BLUESKY_IDENTIFIER=your-handle.bsky.social
+BLUESKY_PASSWORD=...
+DATABASE_PATH=cook_county_lots.db
+```
+
+Keep credentials and Bluesky session files outside version control. If Twitter is enabled, `TWITTER_START_PIN10` is required to prevent accidental historical backfills.
+
+## Commands
+
+Build the application before running its compiled commands:
+
+```bash
+npm run build
+npm run audit
+npm run post-next -- --dry-run
+npm run post-next
+```
+
+Available `post-next` options:
+
+- `--database <path>` overrides `DATABASE_PATH`.
+- `--id <PIN10>` targets a specific pending parcel.
+- `--platform bluesky|twitter|all` restricts enabled platforms.
+- `--dry-run` selects and composes a post without database writes or network requests.
+- `--verbose` enables debug logging.
+
+When an addressed parcel is selected, the configured `PRINT_FORMAT` controls its post text. For a parcel without a common address, the post contains only its PIN10 and uses the parcel centroid for Street View. The image alt text explicitly notes that the parcel does not have a common address.
+
+## Scheduling and deployment
+
+Run `npm run post-next` from any scheduler that supports non-overlapping jobs, such as cron, systemd, or a container platform. Each invocation selects at most one parcel. The application also takes an expiring SQLite lease to prevent overlapping publishers.
+
+Build artifacts are written to `dist/`. A deployment needs `dist/`, production `node_modules/`, `package.json`, and `package-lock.json`, plus externally managed environment variables, credentials, session storage, and the SQLite database.
+
+## Delivery safety
+
+The bot chooses the next pending PIN10 above the platform's confirmed high-water mark. It does not automatically backfill older gaps. Successful post references remain in the `lots` table, while additive application tables track runs, leases, and delivery reconciliation.
+
+Bluesky posts use deterministic AT Protocol record keys. If publication succeeds remotely but local confirmation is interrupted, the next run resolves the existing record before attempting another post.
+
+## Development
+
+```bash
 npm run check
 npm test
 npm run build
 ```
 
-## Configuration
-
-Copy `.env.example` to `.env` for local use. Production uses `/etc/everylotbot.env` rather than a repository file.
-
-Required for the current Bluesky deployment:
-
-```dotenv
-ENABLE_BLUESKY=true
-ENABLE_TWITTER=false
-GOOGLE_API_KEY=...
-BLUESKY_IDENTIFIER=everylotchicago.bsky.social
-BLUESKY_PASSWORD=...
-BLUESKY_SESSION_PATH=var/bluesky-session.json
-DATABASE_PATH=cook_county_lots.db
-PRINT_FORMAT={address}
-STREETVIEW_PITCH=11.55
-STREETVIEW_ZOOM=.9
-STREETVIEW_RADIUS_METERS=500
-```
-
-Twitter remains disabled in production. Enabling it also requires all four OAuth 1.0a credentials and an explicit `TWITTER_START_PIN10`; the application refuses to enable Twitter without a starting cursor so it cannot accidentally backfill historical lots.
-
-## Commands
-
-Build first, then use the compiled commands:
-
-```bash
-npm run build
-node dist/src/cli/audit.js
-node dist/src/cli/post-next.js --dry-run
-node dist/src/cli/post-next.js
-```
-
-Options for `post-next`:
-
-- `--database <path>` overrides `DATABASE_PATH`.
-- `--id <PIN10>` intentionally targets a specific pending lot.
-- `--platform bluesky|twitter|all` restricts enabled platforms.
-- `--dry-run` selects and composes without database writes, API authentication, image download, or publication.
-- `--verbose` enables debug logging.
-
-Scheduled failures exit nonzero. The next invocation retries the same unconfirmed lot. A database lease and the deployment-level `flock` prevent overlapping publishers.
-
-## Bluesky delivery behavior
-
-New posts use a deterministic AT Protocol record key, `everylot-<PIN10>`. If a request succeeds remotely but local confirmation is interrupted, the next run resolves that record before writing again. Bluesky sessions are persisted with restrictive permissions and resumed, avoiding a fresh login for every one of the 80 daily executions.
-
-## Safe Cook County import
-
-The importer stages and validates paginated CSV data, then upserts addresses while preserving all post status fields. It never drops `lots`.
-Rows without a property street address no longer overwrite a previously repaired address.
-
-```bash
-node dist/src/cli/ingest.js --year 2023 --city CHICAGO
-node dist/src/cli/enrich-centroids.js
-```
-
-The centroid enrichment command updates only unposted parcels that lack a usable street address. It selects the latest available Cook County Parcel Universe centroid for each PIN10 while leaving addresses and posting state unchanged.
-
-When a selected lot has no street address but does have a centroid, the post text is its ten-digit PIN10 only. Street View searches for an outdoor panorama within `STREETVIEW_RADIUS_METERS` of the centroid and lets Google aim the camera back toward the requested parcel location. Addressed parcels retain the existing address text and image lookup behavior.
-
-Changing the production tax year is a separate data migration and must not be combined with the TypeScript runtime cutover.
-
-## Deployment
-
-CI builds and tests on Ubuntu x86_64, then produces a versioned production artifact with compiled JavaScript and production dependencies. This avoids compiling TypeScript or resolving packages on the 416 MiB Lightsail host.
-
-The architecture and invariants are recorded in [MIGRATION_SPEC.md](MIGRATION_SPEC.md). The exact production cutover, verification, and rollback procedure is in [deploy/README.md](deploy/README.md). The systemd timer matches the schedule observed in PM2 rather than the stale schedule in the original untracked production ecosystem file.
-
-No deployment is performed merely by merging this branch.
-
-## Project structure
-
-```text
-src/
-  cli/             audit, ingest, and post-next entry points
-  domain/          lot types, address cleanup, post composition
-  platforms/       Bluesky and optional Twitter publishers
-  services/        Google Street View client
-  app.ts            one-run orchestration
-  config.ts         validated environment configuration
-  db.ts             SQLite compatibility and delivery state
-  ingestion.ts      safe Cook County staging/upsert
-tests-ts/           TypeScript regression and integration tests
-deploy/             systemd units, production environment example, runbook
-everylot/           legacy Python rollback implementation
-```
-
-## Operational logging
-
-The TypeScript service emits compact JSON to stdout/stderr for journald. Successful HTTP calls are not logged individually, and secret-bearing request URLs are never written to logs. Each posting event includes its run ID, PIN10, platform, outcome, and confirmed public reference.
+Source code lives in `src/`, and tests live in `tests/`.
 
 ## License and credits
 
-GPL-3.0. This project is based on Neil Freeman's original `everylotbot` and was adapted for Chicago property data and modern social platforms.
+GPL-3.0. This project is based on Neil Freeman's original `everylotbot` and was adapted for Cook County data and modern social platforms.
