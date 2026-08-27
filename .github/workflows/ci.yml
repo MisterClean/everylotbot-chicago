@@ -2,18 +2,77 @@ name: CI
 
 on:
   push:
+    branches: ["main", "codex/**"]
   pull_request:
+
+permissions:
+  contents: read
 
 jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm run check
-      - run: npm test
-      - run: npm run build
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run check
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Build the production container
+        run: >-
+          docker build
+          --platform linux/amd64
+          --tag everylotbot-chicago:ci
+          .
+
+      - name: Create a smoke-test database
+        run: |
+          mkdir .ci-smoke
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          import { DatabaseSync } from "node:sqlite";
+
+          const database = new DatabaseSync(".ci-smoke/lots.db");
+          database.exec(readFileSync("schema.sql", "utf8"));
+          database.prepare(`
+            INSERT INTO lots(id, address, lat, lon)
+            VALUES (?, ?, ?, ?)
+          `).run("1614317042", "3900 W TAYLOR ST, CHICAGO, IL", 0, 0);
+          database.close();
+          NODE
+
+      - name: Smoke-test migration, audit, and dry run
+        run: |
+          container_args=(
+            --rm
+            --platform linux/amd64
+            --user "$(id -u):$(id -g)"
+            --read-only
+            --network none
+            --tmpfs "/tmp:rw,nosuid,nodev,size=64m"
+            --env ENABLE_BLUESKY=true
+            --env ENABLE_TWITTER=false
+            --env DATABASE_PATH=/data/lots.db
+            --volume "$PWD/.ci-smoke:/data"
+          )
+          docker run "${container_args[@]}" everylotbot-chicago:ci \
+            node dist/src/cli/migrate.js --database /data/lots.db
+          docker run "${container_args[@]}" everylotbot-chicago:ci \
+            node dist/src/cli/audit.js --database /data/lots.db
+          docker run "${container_args[@]}" everylotbot-chicago:ci \
+            node dist/src/cli/post-next.js --database /data/lots.db --dry-run

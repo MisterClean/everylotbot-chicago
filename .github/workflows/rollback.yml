@@ -1,0 +1,81 @@
+name: Roll back production
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Full Git commit SHA on main, or a published sha256 image digest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: everylotbot-production
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/misterclean/everylotbot-chicago
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Resolve and validate the requested image
+        id: resolve
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          if [[ "$TARGET" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            source_ref="${IMAGE_NAME}@${TARGET}"
+            expected_digest="$TARGET"
+          elif [[ "$TARGET" =~ ^[0-9a-f]{40}$ ]]; then
+            git cat-file -e "${TARGET}^{commit}"
+            git merge-base --is-ancestor "$TARGET" origin/main
+            source_ref="${IMAGE_NAME}:sha-${TARGET}"
+            expected_digest=""
+          else
+            echo "Target must be a full 40-character commit SHA or sha256 digest" >&2
+            exit 1
+          fi
+
+          inspected_digest="$(
+            docker buildx imagetools inspect "$source_ref" |
+              awk '$1 == "Digest:" { print $2; exit }'
+          )"
+          if [[ ! "$inspected_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not resolve a package digest for $source_ref" >&2
+            exit 1
+          fi
+          if [[ -n "$expected_digest" && "$inspected_digest" != "$expected_digest" ]]; then
+            echo "Resolved digest does not match the requested digest" >&2
+            exit 1
+          fi
+
+          echo "digest=$inspected_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Move production to the requested digest
+        env:
+          IMAGE_DIGEST: ${{ steps.resolve.outputs.digest }}
+        run: >-
+          docker buildx imagetools create
+          --tag "${IMAGE_NAME}:production"
+          "${IMAGE_NAME}@${IMAGE_DIGEST}"

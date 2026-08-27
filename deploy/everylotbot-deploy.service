@@ -1,0 +1,13 @@
+[Unit]
+Description=Deploy the promoted EveryLot Chicago image
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/everylotbot.env
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/deploy-everylotbot
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=idle
