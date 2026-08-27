@@ -1,286 +1,117 @@
-# EveryLot Chicago Bot
+# EveryLot Chicago
 
-A bot that posts images of every property lot in Chicago to Bluesky and/or Twitter. This is a modernized version of the original everylotbot, specifically configured for Chicago property data.
+EveryLot Chicago posts a Google Street View image of each Cook County property lot to Bluesky, in ascending PIN10 order. The production bot runs on an AWS Lightsail instance every 15 minutes during its configured posting hours.
 
-## Features
+The repository now contains a TypeScript replacement for the original Python application. Python remains present solely for production rollback until the TypeScript service completes its observation period.
 
-- Fetches property data from Cook County Data Portal
-- Supports posting to both Bluesky and Twitter
-- Uses Google Street View for property images
-- Maintains a local SQLite database of properties
-- Can start from a specific PIN10 property ID
-- Modern Python 3.10+ implementation
+## Production safety contract
 
-## Architecture
+The database is the durable production state. The bot finds the largest confirmed platform-specific PIN10 and selects the next pending row above it. It intentionally does **not** fill pending rows below that high-water mark: production began at PIN10 `1431213018`, leaving 188,087 earlier rows deliberately skipped.
 
-```mermaid
-graph TD
-    CDP[Cook County Data Portal] --> DI[data_ingest.py]
-    GAPI[Google APIs] --> EL[everylot.py]
-    SMP[Social Media Platforms]
-    
-    subgraph Data Processing
-        DI --> |Fetch data<br/>Sort by PIN14<br/>Deduplicate| DB[SQLite Database]
-        EL --> |Image fetching<br/>Address lookup<br/>Camera angles| DB
-    end
-    
-    subgraph Database
-        DB --> |Property records<br/>Platform-specific<br/>posting status| BOT[bot.py]
-    end
-    
-    subgraph Bot Logic
-        BOT --> |Main logic<br/>Coordination| SM[Social Modules]
-        SM --> |bluesky.py<br/>twitter.py| SMP
-    end
-```
+The rewrite preserves the legacy `lots` schema and continues storing public post references in `posted_bluesky` or `posted_twitter`. This allows immediate rollback to Python. New migrations are additive and provide run history, delivery reconciliation, and a database lease.
 
-Configuration (.env):
-├── API Credentials
-├── Platform Settings
-├── Formatting Options
-└── Runtime Configuration
+## Requirements
 
-Data Flow:
-1. data_ingest.py fetches and processes property data
-2. Data is stored in SQLite database
-3. bot.py coordinates image fetching and posting
-4. everylot.py handles Street View interaction
-5. Social modules manage platform-specific posting
-
-## Setup
-
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/everylotbot-chicago.git
-cd everylotbot-chicago
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Create a `.env` file from the example:
-```bash
-cp .env.example .env
-```
-
-4. Configure your `.env` file with the required credentials:
-- Cook County Data Portal token
+- Node.js 24 LTS
+- npm
+- The existing SQLite database
 - Google Street View API key
-- Bluesky credentials
-- Twitter credentials (optional)
-- Other settings as needed
+- Bluesky handle and app password
 
-## Initial Data Import
-
-Before running the bot, you need to fetch and process the Cook County property data:
+Install and verify:
 
 ```bash
-python data_ingest.py --year 2023 --city CHICAGO
+npm ci
+npm run check
+npm test
+npm run build
 ```
-
-This will:
-1. Fetch property data from Cook County
-2. Sort by PIN14 ascending
-3. De-duplicate by PIN10
-4. Create a local SQLite database (`cook_county_lots.db`)
-
-## Running the Bot
-
-Basic usage:
-```bash
-python -m everylot.bot
-```
-
-Options:
-- `--database`: Path to SQLite database (default: from .env or cook_county_lots.db)
-- `--id`: Start with a specific PIN10
-- `-s/--search-format`: Format string for Google Street View searches
-- `-p/--print-format`: Format string for post text
-- `--dry-run`: Test without posting
-- `-v/--verbose`: Show debug output
 
 ## Configuration
 
-The bot can be configured through environment variables in your `.env` file:
+Copy `.env.example` to `.env` for local use. Production uses `/etc/everylotbot.env` rather than a repository file.
 
-```bash
-# Required tokens
-CHICAGO_DATA_PORTAL_TOKEN=your_token_here
-GOOGLE_API_KEY=your_google_api_key
+Required for the current Bluesky deployment:
 
-# Bluesky credentials
-BLUESKY_IDENTIFIER=your.bsky.social
-BLUESKY_PASSWORD=your_password
-
-# Twitter credentials (optional)
-TWITTER_CONSUMER_KEY=your_key
-TWITTER_CONSUMER_SECRET=your_secret
-TWITTER_ACCESS_TOKEN=your_token
-TWITTER_ACCESS_TOKEN_SECRET=your_token_secret
-
-# Toggles
-ENABLE_TWITTER=false
+```dotenv
 ENABLE_BLUESKY=true
-
-# Optional settings
-START_PIN10=           # Start from this PIN10 (see "Starting Point Behavior" below)
-SEARCH_FORMAT="{address}, {city} {state}"
-PRINT_FORMAT="{address}"
+ENABLE_TWITTER=false
+GOOGLE_API_KEY=...
+BLUESKY_IDENTIFIER=everylotchicago.bsky.social
+BLUESKY_PASSWORD=...
+BLUESKY_SESSION_PATH=var/bluesky-session.json
 DATABASE_PATH=cook_county_lots.db
-
-# Starting Point Behavior
-When START_PIN10 is set:
-1. During initial data import (data_ingest.py):
-   - All PINs up to and including START_PIN10 are marked as posted ('1')
-   - This effectively skips these properties when the bot runs
-2. During bot operation:
-   - If START_PIN10 is not yet posted, bot starts with that PIN
-   - If START_PIN10 is already posted, bot starts with the next unposted PIN
-3. After successful posts:
-   - The posted_bluesky column stores the web URL of the post
-   - Format: https://bsky.app/profile/[handle]/post/[id]
-
-# Camera settings
-STREETVIEW_PITCH=-11.55  # Camera angle (default: -10)
-STREETVIEW_ZOOM=1        # Zoom level (default: 0.8)
+PRINT_FORMAT={address}
+STREETVIEW_PITCH=11.55
+STREETVIEW_ZOOM=.9
 ```
 
-## Running Automatically
+Twitter remains disabled in production. Enabling it also requires all four OAuth 1.0a credentials and an explicit `TWITTER_START_PIN10`; the application refuses to enable Twitter without a starting cursor so it cannot accidentally backfill historical lots.
 
-To run the bot automatically, set up a cron job. For example, to post every hour:
+## Commands
+
+Build first, then use the compiled commands:
 
 ```bash
-0 * * * * cd /path/to/everylotbot-chicago && python -m everylot.bot >> bot.log 2>&1
+npm run build
+node dist/src/cli/audit.js
+node dist/src/cli/post-next.js --dry-run
+node dist/src/cli/post-next.js
 ```
 
-## Development
+Options for `post-next`:
 
-### Project Structure
-```
-everylotbot-chicago/
-├── data_ingest.py      # Data fetching and processing
-├── requirements.txt    # Python dependencies
-├── .env.example       # Environment variables template
-├── pytest.ini         # Test configuration
-├── tests/             # Test suite
-│   ├── conftest.py    # Shared test fixtures
-│   ├── test_bot.py    # Bot integration tests
-│   ├── test_data_ingest.py  # Data ingestion tests
-│   ├── test_bluesky.py      # Bluesky module tests
-│   ├── test_twitter.py      # Twitter module tests
-│   └── test_everylot.py     # Core functionality tests
-└── everylot/          # Main bot package
-    ├── __init__.py
-    ├── bot.py         # Main bot logic
-    ├── everylot.py    # Core functionality
-    ├── bluesky.py     # Bluesky posting
-    └── twitter.py     # Twitter posting
-```
+- `--database <path>` overrides `DATABASE_PATH`.
+- `--id <PIN10>` intentionally targets a specific pending lot.
+- `--platform bluesky|twitter|all` restricts enabled platforms.
+- `--dry-run` selects and composes without database writes, API authentication, image download, or publication.
+- `--verbose` enables debug logging.
 
-### Testing
+Scheduled failures exit nonzero. The next invocation retries the same unconfirmed lot. A database lease and the deployment-level `flock` prevent overlapping publishers.
 
-The project includes a comprehensive test suite using pytest. To run the tests:
+## Bluesky delivery behavior
+
+New posts use a deterministic AT Protocol record key, `everylot-<PIN10>`. If a request succeeds remotely but local confirmation is interrupted, the next run resolves that record before writing again. Bluesky sessions are persisted with restrictive permissions and resumed, avoiding a fresh login for every one of the 80 daily executions.
+
+## Safe Cook County import
+
+The importer stages and validates paginated CSV data, then upserts addresses while preserving all post status fields. It never drops `lots`.
 
 ```bash
-# Install test dependencies
-pip install -r requirements.txt
-
-# Run all tests with coverage report
-pytest
-
-# Run specific test file
-pytest tests/test_bot.py
-
-# Run tests with detailed output
-pytest -v
-
-# Run tests and show print statements
-pytest -s
+node dist/src/cli/ingest.js --year 2023 --city CHICAGO
 ```
 
-Test coverage reports will show which lines of code are covered by tests.
+Changing the production tax year is a separate data migration and must not be combined with the TypeScript runtime cutover.
 
-### Database Schema
+## Deployment
 
-The SQLite database (`cook_county_lots.db`) contains a single table `lots` with the following schema:
+CI builds and tests on Ubuntu x86_64, then produces a versioned production artifact with compiled JavaScript and production dependencies. This avoids compiling TypeScript or resolving packages on the 416 MiB Lightsail host.
 
-- `id` (TEXT): Primary key, the PIN10 identifier
-- `address` (TEXT): Full property address
-- `lat` (REAL): Latitude coordinate
-- `lon` (REAL): Longitude coordinate
-- `posted_twitter` (TEXT): Twitter post ID or '0' if not posted
-- `posted_bluesky` (TEXT): Either:
-  - '0': Not posted
-  - '1': Marked as posted (for pins before START_PIN10)
-  - URL: Web link to the Bluesky post (e.g., https://bsky.app/profile/handle/post/id)
+The architecture and invariants are recorded in [MIGRATION_SPEC.md](MIGRATION_SPEC.md). The exact production cutover, verification, and rollback procedure is in [deploy/README.md](deploy/README.md). The systemd timer matches the schedule observed in PM2 rather than the stale schedule in the original untracked production ecosystem file.
 
-### Image ALT Text Format
+No deployment is performed merely by merging this branch.
 
-The bot uses a standardized format for image ALT text to ensure accessibility and consistent property identification:
+## Project structure
 
-```
-Google Streetview of the property with PIN10 [PIN10]: [clean address]
-```
-
-For example:
-```
-Google Streetview of the property with PIN10 1234567890: 2023 North Damen Avenue
+```text
+src/
+  cli/             audit, ingest, and post-next entry points
+  domain/          lot types, address cleanup, post composition
+  platforms/       Bluesky and optional Twitter publishers
+  services/        Google Street View client
+  app.ts            one-run orchestration
+  config.ts         validated environment configuration
+  db.ts             SQLite compatibility and delivery state
+  ingestion.ts      safe Cook County staging/upsert
+tests-ts/           TypeScript regression and integration tests
+deploy/             systemd units, production environment example, runbook
+everylot/           legacy Python rollback implementation
 ```
 
-The address is automatically cleaned and formatted (e.g., "N" → "North", "AVE" → "Avenue") for better readability.
+## Operational logging
 
-### Development Guidelines
+The TypeScript service emits compact JSON to stdout/stderr for journald. Successful HTTP calls are not logged individually, and secret-bearing request URLs are never written to logs. Each posting event includes its run ID, PIN10, platform, outcome, and confirmed public reference.
 
-1. **Code Style**
-   - Follow PEP 8 guidelines
-   - Use type hints where appropriate
-   - Include docstrings for all functions and classes
+## License and credits
 
-2. **Testing**
-   - Write tests for new features
-   - Maintain test coverage above 80%
-   - Use fixtures from conftest.py when possible
-   - Mock external dependencies (APIs, databases)
-
-3. **Environment**
-   - Use .env for configuration
-   - Never commit sensitive credentials
-   - Document new environment variables in .env.example
-
-4. **Git Workflow**
-   - Create feature branches for new work
-   - Write clear commit messages
-   - Update tests and documentation
-   - Run full test suite before committing
-
-### Adding New Features
-
-1. **New Social Platform**
-   - Create new module in everylot/
-   - Follow TwitterPoster/BlueskyPoster pattern
-   - Add configuration to .env.example
-   - Create corresponding test file
-   - Update bot.py to handle new platform
-
-2. **Data Source Changes**
-   - Update data_ingest.py
-   - Maintain PIN10/PIN14 logic
-   - Update database schema if needed
-   - Add new environment variables
-   - Update corresponding tests
-
-3. **Configuration Changes**
-   - Document in .env.example
-   - Update README.md
-   - Add validation in code
-   - Update tests to cover new options
-
-## Credits
-
-This is a modernized fork of [everylotbot](https://github.com/fitnr/everylotbot) by Neil Freeman, updated for Chicago property data and modern social media platforms.
-
-## License
-
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+GPL-3.0. This project is based on Neil Freeman's original `everylotbot` and was adapted for Chicago property data and modern social platforms.

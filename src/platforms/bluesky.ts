@@ -1,0 +1,102 @@
+import { AtpAgent, type AtpSessionData } from "@atproto/api";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import type { AppConfig } from "../config.js";
+import type { ComposedPost, Lot, Publisher, PublishResult } from "../domain/types.js";
+
+export class PublishError extends Error {
+  constructor(message: string, readonly uncertain: boolean, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "PublishError";
+  }
+}
+
+export function blueskyRecordKey(pin10: string): string {
+  if (!/^\d{10}$/.test(pin10)) throw new Error(`Invalid PIN10: ${pin10}`);
+  return `everylot-${pin10}`;
+}
+
+function publicUrl(uri: string): string {
+  const parts = uri.split("/");
+  const did = parts[2];
+  const rkey = parts.at(-1);
+  if (did === undefined || rkey === undefined || !uri.startsWith("at://")) return uri;
+  return `https://bsky.app/profile/${did}/post/${rkey}`;
+}
+
+function isRecordNotFound(error: unknown): boolean {
+  if (error instanceof Error && /RecordNotFound|Could not locate record|404/i.test(error.message)) return true;
+  if (typeof error === "object" && error !== null) {
+    const candidate = error as { status?: unknown; error?: unknown };
+    return candidate.status === 404 || candidate.error === "RecordNotFound";
+  }
+  return false;
+}
+
+export class BlueskyPublisher implements Publisher {
+  readonly platform = "bluesky" as const;
+  private readonly agent: AtpAgent;
+
+  constructor(private readonly config: NonNullable<AppConfig["bluesky"]>) {
+    this.agent = new AtpAgent({
+      service: config.service,
+      persistSession: (_event, session) => {
+        if (session !== undefined) this.persistSession(session);
+      }
+    });
+  }
+
+  private persistSession(session: AtpSessionData): void {
+    mkdirSync(dirname(this.config.sessionPath), { recursive: true, mode: 0o700 });
+    const temporary = `${this.config.sessionPath}.tmp`;
+    writeFileSync(temporary, JSON.stringify(session), { encoding: "utf8", mode: 0o600 });
+    renameSync(temporary, this.config.sessionPath);
+  }
+
+  private async authenticate(): Promise<void> {
+    try {
+      const stored = JSON.parse(readFileSync(this.config.sessionPath, "utf8")) as AtpSessionData;
+      await this.agent.resumeSession(stored);
+      return;
+    } catch {
+      // A missing, expired, or corrupt session falls back to a fresh login.
+    }
+    await this.agent.login({ identifier: this.config.identifier, password: this.config.password });
+    if (this.agent.session !== undefined) this.persistSession(this.agent.session);
+  }
+
+  async publish(lot: Lot, post: ComposedPost, image: Uint8Array): Promise<PublishResult> {
+    await this.authenticate();
+    const did = this.agent.session?.did;
+    if (did === undefined) throw new PublishError("Bluesky session did not contain a DID", false);
+    const rkey = blueskyRecordKey(lot.id);
+    const collection = "app.bsky.feed.post";
+
+    try {
+      const existing = await this.agent.com.atproto.repo.getRecord({ repo: did, collection, rkey });
+      const value = existing.data.value as { text?: unknown };
+      if (value.text !== post.text) throw new PublishError(`Existing Bluesky record ${rkey} has unexpected text`, false);
+      return { ref: publicUrl(existing.data.uri) };
+    } catch (error) {
+      if (!isRecordNotFound(error)) throw error;
+    }
+
+    const upload = await this.agent.uploadBlob(image, { encoding: "image/jpeg" });
+    const record = {
+      $type: collection,
+      text: post.text,
+      createdAt: new Date().toISOString(),
+      embed: {
+        $type: "app.bsky.embed.images",
+        images: [{ image: upload.data.blob, alt: post.alt }]
+      }
+    };
+
+    try {
+      const result = await this.agent.com.atproto.repo.putRecord({ repo: did, collection, rkey, record });
+      return { ref: publicUrl(result.data.uri) };
+    } catch (error) {
+      throw new PublishError("Bluesky record write failed with an uncertain outcome", true, { cause: error });
+    }
+  }
+}
