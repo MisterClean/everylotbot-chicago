@@ -11,7 +11,7 @@ export class StreetViewClient {
     if (this.config.googleApiKey === undefined) throw new Error("GOOGLE_API_KEY is required");
     const url = new URL(STREET_VIEW_URL);
     if (hasUsableAddress(lot.address)) {
-      // This deliberately preserves the production Python request for addressed parcels.
+      // Preserve the established address-based lookup behavior for addressed parcels.
       url.searchParams.set("location", `${lot.address}, CHICAGO, IL`);
     } else {
       if (!hasUsableCoordinates(lot)) throw new Error(`Lot ${lot.id} has neither a usable address nor coordinates`);

@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  test-and-package:
+  test:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -17,17 +17,3 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build
-      - name: Validate production timer expression
-        run: systemd-analyze calendar '*-*-* 00..07,12..23:00/15:00 UTC'
-      - name: Assemble production artifact
-        run: |
-          npm ci --omit=dev
-          tar -czf everylotbot-${GITHUB_SHA}.tgz dist node_modules package.json package-lock.json deploy
-          sha256sum everylotbot-${GITHUB_SHA}.tgz > everylotbot-${GITHUB_SHA}.tgz.sha256
-      - uses: actions/upload-artifact@v4
-        with:
-          name: everylotbot-${{ github.sha }}
-          path: |
-            everylotbot-${{ github.sha }}.tgz
-            everylotbot-${{ github.sha }}.tgz.sha256
-          retention-days: 30
