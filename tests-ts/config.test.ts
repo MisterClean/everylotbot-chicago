@@ -11,6 +11,7 @@ describe("configuration safety", () => {
     const config = readConfig({ requirePostingSecrets: false });
     expect(config.enabledPlatforms).toEqual(["bluesky"]);
     expect(config.platformStarts).toEqual({});
+    expect(config.streetviewRadiusMeters).toBe(500);
   });
 
   it("refuses Twitter without an explicit starting PIN10", () => {

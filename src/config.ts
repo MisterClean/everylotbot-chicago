@@ -38,6 +38,7 @@ const envSchema = z.object({
   PRINT_FORMAT: z.string().default("{address}"),
   STREETVIEW_PITCH: z.coerce.number().default(11.55),
   STREETVIEW_ZOOM: z.coerce.number().default(0.9),
+  STREETVIEW_RADIUS_METERS: z.coerce.number().int().min(1).max(1000).default(500),
   HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   LEASE_SECONDS: z.coerce.number().int().min(60).max(840).default(840)
 });
@@ -63,6 +64,7 @@ export interface AppConfig {
   printFormat: string;
   streetviewPitch: number;
   streetviewZoom: number;
+  streetviewRadiusMeters: number;
   httpTimeoutMs: number;
   leaseSeconds: number;
 }
@@ -120,6 +122,7 @@ export function readConfig(options: { requirePostingSecrets: boolean } = { requi
     printFormat: env.PRINT_FORMAT,
     streetviewPitch: env.STREETVIEW_PITCH,
     streetviewZoom: env.STREETVIEW_ZOOM,
+    streetviewRadiusMeters: env.STREETVIEW_RADIUS_METERS,
     httpTimeoutMs: env.HTTP_TIMEOUT_MS,
     leaseSeconds: env.LEASE_SECONDS
   };

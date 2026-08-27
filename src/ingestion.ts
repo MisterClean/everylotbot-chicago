@@ -105,7 +105,12 @@ export async function ingest(config: AppConfig, options: IngestOptions, logger: 
       address TEXT NOT NULL
     );
   `);
-  const insert = db.prepare("INSERT OR IGNORE INTO import_lots(id, pin14, address) VALUES (?, ?, ?)");
+  const insert = db.prepare(`
+    INSERT INTO import_lots(id, pin14, address) VALUES (?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      pin14 = CASE WHEN excluded.address != '' THEN excluded.pin14 ELSE import_lots.pin14 END,
+      address = CASE WHEN excluded.address != '' THEN excluded.address ELSE import_lots.address END
+  `);
   let offset = 0;
   let fetched = 0;
 
@@ -130,8 +135,10 @@ export async function ingest(config: AppConfig, options: IngestOptions, logger: 
           rawCount += 1;
           const row = raw as unknown as SourceRow;
           if (!/^\d{10}$/.test(row.pin10) || !/^\d{14}$/.test(row.pin)) continue;
-          const address = `${row.prop_address_full.trim()}, ${row.prop_address_city_name.trim()}, ${row.prop_address_state.trim()} ${row.prop_address_zipcode_1.trim()}`.replace(/,?\s+$/, "");
-          if (address.length === 0) continue;
+          const street = row.prop_address_full.trim();
+          const address = street.length === 0
+            ? ""
+            : `${street}, ${row.prop_address_city_name.trim()}, ${row.prop_address_state.trim()} ${row.prop_address_zipcode_1.trim()}`.replace(/,?\s+$/, "");
           insert.run(row.pin10, row.pin, address);
           batchCount += 1;
         }
@@ -153,7 +160,8 @@ export async function ingest(config: AppConfig, options: IngestOptions, logger: 
       db.exec(`
         INSERT INTO lots(id, address, lat, lon, posted_twitter, posted_bluesky)
         SELECT id, address, 0.0, 0.0, '0', '0' FROM import_lots WHERE true
-        ON CONFLICT(id) DO UPDATE SET address = excluded.address;
+        ON CONFLICT(id) DO UPDATE SET
+          address = CASE WHEN TRIM(excluded.address) != '' THEN excluded.address ELSE lots.address END;
         COMMIT;
       `);
     } catch (error) {

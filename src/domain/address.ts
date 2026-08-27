@@ -23,6 +23,19 @@ const STREET_TYPES: Readonly<Record<string, string>> = {
   SQ: "Square"
 };
 
+const MISSING_ADDRESSES = new Set(["", "CHICAGO, IL", ", CHICAGO, IL"]);
+
+export function hasUsableAddress(address: string): boolean {
+  return !MISSING_ADDRESSES.has(address.trim().toUpperCase());
+}
+
+export function hasUsableCoordinates(lot: Pick<Lot, "lat" | "lon">): boolean {
+  return Number.isFinite(lot.lat) && Number.isFinite(lot.lon)
+    && lot.lat >= -90 && lot.lat <= 90
+    && lot.lon >= -180 && lot.lon <= 180
+    && lot.lat !== 0 && lot.lon !== 0;
+}
+
 export function sanitizeAddress(address: string): string {
   const parts = address.trim().split(",", 1)[0]?.split(/\s+/).filter(Boolean) ?? [];
   const result: string[] = [];
@@ -62,6 +75,15 @@ export function formatPost(template: string, lot: Lot): string {
 }
 
 export function composePost(lot: Lot, printFormat: string): ComposedPost {
+  if (!hasUsableAddress(lot.address)) {
+    if (!hasUsableCoordinates(lot)) throw new Error(`Lot ${lot.id} has neither a usable address nor coordinates`);
+    return {
+      text: lot.id,
+      alt: `Google Street View near Cook County parcel PIN10 ${lot.id}. This parcel does not have a common address.`,
+      lat: lot.lat,
+      lon: lot.lon
+    };
+  }
   const cleanAddress = sanitizeAddress(lot.address);
   return {
     text: formatPost(printFormat, lot),
