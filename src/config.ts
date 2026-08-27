@@ -21,6 +21,14 @@ const optionalPin10 = z.preprocess(
   z.string().regex(/^\d{10}$/).optional()
 );
 
+const printFormat = z.string().transform((value) => {
+  const quote = value.at(0);
+  if ((quote === "\"" || quote === "'") && value.at(-1) === quote) {
+    return value.slice(1, -1);
+  }
+  return value;
+}).pipe(z.string().min(1));
+
 const envSchema = z.object({
   DATABASE_PATH: z.string().min(1).default("cook_county_lots.db"),
   GOOGLE_API_KEY: optionalString,
@@ -35,7 +43,7 @@ const envSchema = z.object({
   TWITTER_START_PIN10: optionalPin10,
   ENABLE_BLUESKY: booleanString.default(true),
   ENABLE_TWITTER: booleanString.default(false),
-  PRINT_FORMAT: z.string().default("{address}"),
+  PRINT_FORMAT: printFormat.default("{address}"),
   STREETVIEW_PITCH: z.coerce.number().default(11.55),
   STREETVIEW_ZOOM: z.coerce.number().default(0.9),
   STREETVIEW_RADIUS_METERS: z.coerce.number().int().min(1).max(1000).default(500),
