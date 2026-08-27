@@ -44,6 +44,7 @@ DATABASE_PATH=cook_county_lots.db
 PRINT_FORMAT={address}
 STREETVIEW_PITCH=11.55
 STREETVIEW_ZOOM=.9
+STREETVIEW_RADIUS_METERS=500
 ```
 
 Twitter remains disabled in production. Enabling it also requires all four OAuth 1.0a credentials and an explicit `TWITTER_START_PIN10`; the application refuses to enable Twitter without a starting cursor so it cannot accidentally backfill historical lots.
@@ -76,10 +77,16 @@ New posts use a deterministic AT Protocol record key, `everylot-<PIN10>`. If a r
 ## Safe Cook County import
 
 The importer stages and validates paginated CSV data, then upserts addresses while preserving all post status fields. It never drops `lots`.
+Rows without a property street address no longer overwrite a previously repaired address.
 
 ```bash
 node dist/src/cli/ingest.js --year 2023 --city CHICAGO
+node dist/src/cli/enrich-centroids.js
 ```
+
+The centroid enrichment command updates only unposted parcels that lack a usable street address. It selects the latest available Cook County Parcel Universe centroid for each PIN10 while leaving addresses and posting state unchanged.
+
+When a selected lot has no street address but does have a centroid, the post text is its ten-digit PIN10 only. Street View searches for an outdoor panorama within `STREETVIEW_RADIUS_METERS` of the centroid and lets Google aim the camera back toward the requested parcel location. Addressed parcels retain the existing address text and image lookup behavior.
 
 Changing the production tax year is a separate data migration and must not be combined with the TypeScript runtime cutover.
 

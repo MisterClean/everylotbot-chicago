@@ -17,6 +17,7 @@ it("dry run is read-only and does not call fetch", async () => {
     printFormat: "{address}",
     streetviewPitch: 11.55,
     streetviewZoom: 0.9,
+    streetviewRadiusMeters: 500,
     httpTimeoutMs: 1000,
     leaseSeconds: 600
   };

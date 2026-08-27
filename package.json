@@ -16,7 +16,8 @@
     "test": "vitest run",
     "post-next": "node dist/src/cli/post-next.js",
     "audit": "node dist/src/cli/audit.js",
-    "ingest": "node dist/src/cli/ingest.js"
+    "ingest": "node dist/src/cli/ingest.js",
+    "enrich-centroids": "node dist/src/cli/enrich-centroids.js"
   },
   "dependencies": {
     "@atproto/api": "^0.20.42",
