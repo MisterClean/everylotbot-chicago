@@ -1,0 +1,32 @@
+{
+  "name": "everylotbot-chicago",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "fsevents": false
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "post-next": "node dist/src/cli/post-next.js",
+    "audit": "node dist/src/cli/audit.js",
+    "ingest": "node dist/src/cli/ingest.js"
+  },
+  "dependencies": {
+    "@atproto/api": "^0.20.42",
+    "@atproto/common-web": "^0.5.10",
+    "dotenv": "^17.2.1",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
