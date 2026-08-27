@@ -19,16 +19,30 @@ describe("production cursor compatibility", () => {
     const path = createFixtureDatabase();
     const database = new LotsDatabase(path);
     database.migrate();
-    database.beginDelivery("1431213021", "bluesky", "everylot-1431213021");
+    database.beginDelivery("1431213021", "bluesky", "3jzfcijpj2z2a");
     database.confirmDelivery("1431213021", "bluesky", "https://bsky.app/profile/did:plc:test/post/new");
     expect(database.getHighWater("bluesky")).toBe("1431213021");
     expect(database.getDeliveryState("1431213021", "bluesky")).toBe("confirmed");
+    expect(database.getDelivery("1431213021", "bluesky")?.deterministicKey).toBe("3jzfcijpj2z2a");
     database.close();
 
     const raw = new DatabaseSync(path, { readOnly: true });
     const row = raw.prepare("SELECT posted_bluesky FROM lots WHERE id = ?").get("1431213021") as { posted_bluesky: string };
     expect(row.posted_bluesky).toContain("/post/new");
     raw.close();
+  });
+
+  it("replaces an invalid delivery key before retrying an uncertain write", () => {
+    const database = new LotsDatabase(createFixtureDatabase());
+    database.migrate();
+    database.beginDelivery("1431213021", "bluesky", "everylot-1431213021");
+    database.failDelivery("1431213021", "bluesky", new Error("uncertain"), true);
+    database.beginDelivery("1431213021", "bluesky", "3jzfcijpj2z2a");
+    expect(database.getDelivery("1431213021", "bluesky")).toMatchObject({
+      state: "publishing",
+      deterministicKey: "3jzfcijpj2z2a"
+    });
+    database.close();
   });
 
   it("prevents a second lease until the first is released", () => {

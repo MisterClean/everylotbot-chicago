@@ -5,7 +5,7 @@ import { composePost } from "./domain/address.js";
 import type { Platform, Publisher } from "./domain/types.js";
 import type { Logger } from "./logging.js";
 import { errorFields } from "./logging.js";
-import { BlueskyPublisher, PublishError, blueskyRecordKey } from "./platforms/bluesky.js";
+import { BlueskyPublisher, isBlueskyRecordKey, newBlueskyRecordKey, PublishError } from "./platforms/bluesky.js";
 import { TwitterPublisher } from "./platforms/twitter.js";
 import { StreetViewClient } from "./services/street-view.js";
 
@@ -79,15 +79,19 @@ export async function runOnce(config: AppConfig, logger: Logger, options: RunOpt
     const errors: unknown[] = [];
 
     for (const platform of selection.platforms) {
-      const previousState = database.getDeliveryState(selection.lot.id, platform);
+      const previousDelivery = database.getDelivery(selection.lot.id, platform);
+      const previousState = previousDelivery?.state ?? null;
       if ((previousState === "unknown" || previousState === "publishing") && platform !== "bluesky") {
         errors.push(new Error(`Refusing to retry uncertain ${platform} delivery for ${selection.lot.id}`));
         continue;
       }
-      const key = platform === "bluesky" ? blueskyRecordKey(selection.lot.id) : undefined;
+      const previousKey = previousDelivery?.deterministicKey ?? null;
+      const key = platform === "bluesky"
+        ? (isBlueskyRecordKey(previousKey) ? previousKey : newBlueskyRecordKey())
+        : undefined;
       database.beginDelivery(selection.lot.id, platform, key);
       try {
-        const result = await createPublisher(platform, config).publish(selection.lot, post, image);
+        const result = await createPublisher(platform, config).publish(selection.lot, post, image, key);
         database.confirmDelivery(selection.lot.id, platform, result.ref);
         logger.info("post_confirmed", { runId, lotId: selection.lot.id, platform, postRef: result.ref });
       } catch (error) {

@@ -22,5 +22,5 @@ export interface PublishResult {
 
 export interface Publisher {
   readonly platform: Platform;
-  publish(lot: Lot, post: ComposedPost, image: Uint8Array): Promise<PublishResult>;
+  publish(lot: Lot, post: ComposedPost, image: Uint8Array, deliveryKey?: string): Promise<PublishResult>;
 }

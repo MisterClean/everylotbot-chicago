@@ -20,6 +20,11 @@ export interface AuditSummary {
   nextByPlatform: Partial<Record<Platform, Lot | null>>;
 }
 
+export interface Delivery {
+  state: string;
+  deterministicKey: string | null;
+}
+
 export class LotsDatabase {
   readonly connection: DatabaseSync;
 
@@ -233,9 +238,16 @@ export class LotsDatabase {
   }
 
   getDeliveryState(lotId: string, platform: Platform): string | null {
-    const row = this.connection.prepare("SELECT state FROM post_deliveries WHERE lot_id = ? AND platform = ?")
-      .get(lotId, platform) as { state: string } | undefined;
-    return row?.state ?? null;
+    return this.getDelivery(lotId, platform)?.state ?? null;
+  }
+
+  getDelivery(lotId: string, platform: Platform): Delivery | null {
+    const row = this.connection.prepare(`
+      SELECT state, deterministic_key
+      FROM post_deliveries
+      WHERE lot_id = ? AND platform = ?
+    `).get(lotId, platform) as { state: string; deterministic_key: string | null } | undefined;
+    return row === undefined ? null : { state: row.state, deterministicKey: row.deterministic_key };
   }
 
   audit(platforms: readonly Platform[], fallbackStarts: Partial<Record<Platform, string>> = {}): AuditSummary {

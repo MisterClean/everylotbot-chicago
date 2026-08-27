@@ -1,4 +1,5 @@
 import { AtpAgent, type AtpSessionData } from "@atproto/api";
+import { TID } from "@atproto/common-web";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppConfig } from "../config.js";
@@ -11,9 +12,12 @@ export class PublishError extends Error {
   }
 }
 
-export function blueskyRecordKey(pin10: string): string {
-  if (!/^\d{10}$/.test(pin10)) throw new Error(`Invalid PIN10: ${pin10}`);
-  return `everylot-${pin10}`;
+export function newBlueskyRecordKey(): string {
+  return TID.nextStr();
+}
+
+export function isBlueskyRecordKey(value: string | null): value is string {
+  return value !== null && TID.is(value);
 }
 
 function publicUrl(uri: string): string {
@@ -65,11 +69,14 @@ export class BlueskyPublisher implements Publisher {
     if (this.agent.session !== undefined) this.persistSession(this.agent.session);
   }
 
-  async publish(lot: Lot, post: ComposedPost, image: Uint8Array): Promise<PublishResult> {
+  async publish(_lot: Lot, post: ComposedPost, image: Uint8Array, deliveryKey?: string): Promise<PublishResult> {
     await this.authenticate();
     const did = this.agent.session?.did;
     if (did === undefined) throw new PublishError("Bluesky session did not contain a DID", false);
-    const rkey = blueskyRecordKey(lot.id);
+    if (deliveryKey === undefined || !isBlueskyRecordKey(deliveryKey)) {
+      throw new PublishError("Bluesky delivery requires a valid TID record key", false);
+    }
+    const rkey = deliveryKey;
     const collection = "app.bsky.feed.post";
 
     try {
