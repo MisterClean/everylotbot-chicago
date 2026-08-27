@@ -4,6 +4,13 @@ import type { Lot } from "../domain/types.js";
 
 const STREET_VIEW_URL = "https://maps.googleapis.com/maps/api/streetview";
 
+function chicagoAddress(address: string): string {
+  const normalized = address.trim();
+  return /,\s*CHICAGO,\s*IL(?:\s+\d{5}(?:-\d{4})?)?$/i.test(normalized)
+    ? normalized
+    : `${normalized}, CHICAGO, IL`;
+}
+
 export class StreetViewClient {
   constructor(private readonly config: Pick<AppConfig, "googleApiKey" | "streetviewPitch" | "streetviewZoom" | "streetviewRadiusMeters" | "httpTimeoutMs">) {}
 
@@ -11,14 +18,15 @@ export class StreetViewClient {
     if (this.config.googleApiKey === undefined) throw new Error("GOOGLE_API_KEY is required");
     const url = new URL(STREET_VIEW_URL);
     if (hasUsableAddress(lot.address)) {
-      // Preserve the established address-based lookup behavior for addressed parcels.
-      url.searchParams.set("location", `${lot.address}, CHICAGO, IL`);
+      url.searchParams.set("location", chicagoAddress(lot.address));
     } else {
       if (!hasUsableCoordinates(lot)) throw new Error(`Lot ${lot.id} has neither a usable address nor coordinates`);
       url.searchParams.set("location", `${lot.lat},${lot.lon}`);
-      url.searchParams.set("radius", String(this.config.streetviewRadiusMeters));
-      url.searchParams.set("source", "outdoor");
     }
+    // Address lookup defaults to a narrow search and can miss nearby coverage.
+    // Apply the configured radius to both address and coordinate searches.
+    url.searchParams.set("radius", String(this.config.streetviewRadiusMeters));
+    url.searchParams.set("source", "outdoor");
     url.searchParams.set("key", this.config.googleApiKey);
     url.searchParams.set("size", "1000x1000");
     url.searchParams.set("fov", "65");
