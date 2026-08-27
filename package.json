@@ -16,6 +16,7 @@
     "test": "vitest run",
     "post-next": "node dist/src/cli/post-next.js",
     "audit": "node dist/src/cli/audit.js",
+    "migrate": "node dist/src/cli/migrate.js",
     "ingest": "node dist/src/cli/ingest.js",
     "enrich-centroids": "node dist/src/cli/enrich-centroids.js"
   },

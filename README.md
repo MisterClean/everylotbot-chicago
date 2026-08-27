@@ -79,9 +79,15 @@ When an addressed parcel is selected, the configured `PRINT_FORMAT` controls its
 
 ## Scheduling and deployment
 
-Run `npm run post-next` from any scheduler that supports non-overlapping jobs, such as cron, systemd, or a container platform. Each invocation selects at most one parcel. The application also takes an expiring SQLite lease to prevent overlapping publishers.
+Production uses a pull-based, immutable-image deployment through GitHub Actions,
+GHCR, and a Lightsail systemd poller. Each scheduled invocation selects at most
+one parcel, and the application takes an expiring SQLite lease to prevent
+overlapping publishers. See [deploy/README.md](deploy/README.md) for the release,
+database-safety, and rollback procedures.
 
-Build artifacts are written to `dist/`. A deployment needs `dist/`, production `node_modules/`, `package.json`, and `package-lock.json`, plus externally managed environment variables, credentials, session storage, and the SQLite database.
+Build artifacts are written to `dist/`. Production images contain code and
+dependencies only. Environment variables, credentials, session storage, and
+the SQLite database remain externally managed on the host.
 
 ## Delivery safety
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll GHCR for promoted EveryLot Chicago images
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=45s
+AccuracySec=15s
+Unit=everylotbot-deploy.service
+
+[Install]
+WantedBy=timers.target

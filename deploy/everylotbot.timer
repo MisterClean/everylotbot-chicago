@@ -1,0 +1,11 @@
+[Unit]
+Description=Run EveryLot Chicago every 15 minutes during production posting hours
+
+[Timer]
+OnCalendar=*-*-* 00..07,12..23:00/15:00 UTC
+Persistent=false
+AccuracySec=1s
+Unit=everylotbot.service
+
+[Install]
+WantedBy=timers.target

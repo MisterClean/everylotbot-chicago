@@ -1,0 +1,16 @@
+[Unit]
+Description=EveryLot Chicago Bluesky Bot
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/everylotbot-image.env
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/everylotbot-image.env
+ExecStartPre=-/usr/bin/docker rm -f everylotbot-chicago
+ExecStart=/usr/bin/flock -n -E 75 /var/lib/everylotbot/post.lock /usr/bin/docker run --rm --name everylotbot-chicago --init --user 1000:1000 --pids-limit 64 --memory 192m --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp:rw,nosuid,nodev,size=64m --env-file /etc/everylotbot.env --env DATABASE_PATH=/data/cook_county_lots.db --env BLUESKY_SESSION_PATH=/state/bluesky-session.json --volume /home/ubuntu/bots/everylotbot-chicago:/data --volume /var/lib/everylotbot:/state ${EVERYLOTBOT_IMAGE}
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
