@@ -19,3 +19,8 @@ var/
 *.db
 *.db-wal
 *.db-shm
+/target/
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.db-journal

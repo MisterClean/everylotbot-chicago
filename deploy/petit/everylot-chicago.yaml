@@ -1,0 +1,17 @@
+id: everylot_chicago
+name: EveryLot Chicago
+enabled: true
+schedule:
+  cron: "0 0,15,30,45 0-7,12-23 * * *"
+  timezone: UTC
+max_concurrency: 1
+tasks:
+  - id: post_next
+    type: command
+    command: /usr/local/libexec/run-everylotbot
+    working_dir: /var/lib/everylotbot
+    timeout_secs: 1200
+    retry:
+      max_attempts: 0
+      delay_secs: 0
+      condition: never
