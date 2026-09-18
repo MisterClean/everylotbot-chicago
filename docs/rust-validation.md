@@ -128,3 +128,15 @@ The next ordinary scheduled post is the live verification point: authentication,
 image delivery, exactly one cursor advance, successful exit, and actual Linux
 memory. Production results are appended after rollout. Local dry-run numbers
 are not substituted for production memory evidence.
+
+Host preparation completed at 16:19 UTC on 18 September 2026. Both Petit job
+configurations validate; EveryLot is disabled in Petit pending the native
+release, and its original timer is still active. The shared scheduler reuses
+all existing history. Restarting the bikeshare compatibility service retained
+the shared scheduler PID. SHA-256 checks confirmed both EveryLot environment
+files, the bikeshare environment, bikeshare DB, and existing bikeshare log are
+unchanged. Host configuration backups are under
+`/root/everylot-native-prep-20260918T161909Z`.
+
+GitHub's production reviewer requirement was removed as requested; the protected
+branch restriction and required main `test` check remain enabled.

@@ -1,6 +1,6 @@
 [Unit]
 Description=Petit shared bot scheduler (Bikeshare and EveryLot)
-Wants=network-online.target
+Wants=network-online.target chicago-bikeshare-bot.service
 After=network-online.target
 StartLimitIntervalSec=3600
 StartLimitBurst=5

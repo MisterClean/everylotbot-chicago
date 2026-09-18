@@ -7,5 +7,5 @@ ConditionPathExists=/etc/everylotbot.env
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/deploy-everylotbot
-TimeoutStartSec=15min
+TimeoutStartSec=30min
 UMask=0027
