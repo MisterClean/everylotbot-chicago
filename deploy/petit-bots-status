@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+systemctl --no-pager --full status petit-bots.service
+sqlite3 -readonly -header -column /var/lib/petit-chicago-bikeshare-bot/history.sqlite3 '
+SELECT job_id,status,
+ datetime(CAST(started_at AS INTEGER)/1000,"unixepoch") AS started_utc,
+ datetime(CAST(ended_at AS INTEGER)/1000,"unixepoch") AS ended_utc,error
+FROM runs WHERE id IN (
+ SELECT id FROM (SELECT id,row_number() OVER (PARTITION BY job_id ORDER BY CAST(started_at AS INTEGER) DESC) AS position FROM runs) WHERE position <= 3
+) ORDER BY job_id,CAST(started_at AS INTEGER) DESC;'

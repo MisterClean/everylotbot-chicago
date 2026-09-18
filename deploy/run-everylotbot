@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Shared with the old service and the native deployer; never truncate this file.
+exec 9>>/var/lib/everylotbot/post.lock
+flock --wait 600 9
+cd /var/lib/everylotbot
+test -s /home/ubuntu/bots/everylotbot-chicago/cook_county_lots.db
+# Petit currently inherits the bikeshare environment. Each EveryLot invocation
+# starts clean and reads its own unchanged credential file.
+env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/var/lib/everylotbot \
+  BLUESKY_SESSION_PATH=/var/lib/everylotbot/bluesky-session.json \
+  /opt/everylotbot/current/everylotbot --env-file /etc/everylotbot.env \
+  post-next --database /home/ubuntu/bots/everylotbot-chicago/cook_county_lots.db \
+  "$@" 2>&1 | tee -a /var/log/everylotbot/worker.log

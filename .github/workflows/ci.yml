@@ -1,78 +1,39 @@
 name: CI
-
 on:
   push:
     branches: ["main", "codex/**"]
   pull_request:
-
 permissions:
   contents: read
-
 jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - name: Check out the repository
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - name: Set up Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run check
-
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Rust
+        run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
+      - name: Formatting and lint
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+          bash -n deploy/deploy-everylotbot deploy/run-everylotbot deploy/petit-bots-status scripts/native-smoke.sh
+          shellcheck deploy/deploy-everylotbot deploy/run-everylotbot deploy/petit-bots-status scripts/native-smoke.sh
       - name: Test
-        run: npm test
-
-      - name: Build
-        run: npm run build
-
-      - name: Build the production container
-        run: >-
-          docker build
-          --platform linux/amd64
-          --tag everylotbot-chicago:ci
-          .
-
-      - name: Create a smoke-test database
+        run: cargo test --locked
+      - name: Build and smoke-test native executable
         run: |
-          mkdir .ci-smoke
-          node --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-          import { DatabaseSync } from "node:sqlite";
-
-          const database = new DatabaseSync(".ci-smoke/lots.db");
-          database.exec(readFileSync("schema.sql", "utf8"));
-          database.prepare(`
-            INSERT INTO lots(id, address, lat, lon)
-            VALUES (?, ?, ?, ?)
-          `).run("1614317042", "3900 W TAYLOR ST, CHICAGO, IL", 0, 0);
-          database.close();
-          NODE
-
-      - name: Smoke-test migration, audit, and dry run
-        run: |
-          container_args=(
-            --rm
-            --platform linux/amd64
-            --user "$(id -u):$(id -g)"
-            --read-only
-            --network none
-            --tmpfs "/tmp:rw,nosuid,nodev,size=64m"
-            --env ENABLE_BLUESKY=true
-            --env ENABLE_TWITTER=false
-            --env DATABASE_PATH=/data/lots.db
-            --volume "$PWD/.ci-smoke:/data"
-          )
-          docker run "${container_args[@]}" everylotbot-chicago:ci \
-            node dist/src/cli/migrate.js --database /data/lots.db
-          docker run "${container_args[@]}" everylotbot-chicago:ci \
-            node dist/src/cli/audit.js --database /data/lots.db
-          docker run "${container_args[@]}" everylotbot-chicago:ci \
-            node dist/src/cli/post-next.js --database /data/lots.db --dry-run
+          cargo build --release --locked
+          bash scripts/native-smoke.sh
+          python3 -m unittest discover -s tests -v
+          mkdir -p dist/native
+          cp target/release/everylotbot dist/native/everylotbot-linux-x86_64
+          digest=$(sha256sum dist/native/everylotbot-linux-x86_64 | cut -d' ' -f1)
+          jq -n --arg commit "$GITHUB_SHA" --arg sha256 "$digest" \
+            '{schema:1,platform:"linux-x86_64",commit:$commit,sha256:$sha256}' > dist/native/production.json
+      - name: Upload the exact tested executable
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: linux-native
+          path: dist/native/*
+          if-no-files-found: error
+          retention-days: 14

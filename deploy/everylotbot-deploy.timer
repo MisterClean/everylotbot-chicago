@@ -1,5 +1,5 @@
 [Unit]
-Description=Poll GHCR for promoted EveryLot Chicago images
+Description=Poll GitHub for tested native EveryLot Chicago releases
 
 [Timer]
 OnBootSec=2min

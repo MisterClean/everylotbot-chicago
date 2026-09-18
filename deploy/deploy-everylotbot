@@ -1,287 +1,110 @@
 #!/usr/bin/env bash
+# Code-only deployment. No schema migrations, live posts, credential writes, or
+# log deletion. Rollback uses the same path with an earlier published commit.
 set -Eeuo pipefail
-
-readonly IMAGE_REPOSITORY="ghcr.io/misterclean/everylotbot-chicago"
-readonly REGISTRY_REPOSITORY="misterclean/everylotbot-chicago"
-readonly PRODUCTION_TAG="production"
-readonly BOT_SERVICE="everylotbot.service"
-readonly BOT_TIMER="everylotbot.timer"
-readonly ENV_FILE="/etc/everylotbot.env"
-readonly IMAGE_ENV_FILE="/etc/everylotbot-image.env"
-readonly DATABASE_PATH="/home/ubuntu/bots/everylotbot-chicago/cook_county_lots.db"
-readonly STATE_DIRECTORY="/var/lib/everylotbot"
-readonly BACKUP_DIRECTORY="${STATE_DIRECTORY}/deploy-backups"
-readonly SHADOW_DIRECTORY="${STATE_DIRECTORY}/deploy-shadow"
-readonly DEPLOYMENT_DIRECTORY="${STATE_DIRECTORY}/deployments"
-readonly LOCK_FILE="/run/lock/everylotbot-deploy.lock"
-readonly MINIMUM_FREE_BYTES=$((2 * 1024 * 1024 * 1024))
-
-requested_digest=""
-timer_was_active=false
-pointer_temp=""
-
-log() {
-  printf '%s %s\n' "$(date --utc +'%Y-%m-%dT%H:%M:%SZ')" "$*"
-}
-
-fail() {
-  log "ERROR: $*" >&2
-  exit 1
-}
-
-usage() {
-  printf 'Usage: %s [--digest sha256:<digest>]\n' "${0##*/}"
-}
-
+umask 0027
+readonly REPOSITORY=MisterClean/everylotbot-chicago
+readonly ROOT=/opt/everylotbot
+readonly STATE=/var/lib/everylotbot
+readonly DATABASE=/home/ubuntu/bots/everylotbot-chicago/cook_county_lots.db
+readonly BASE="https://github.com/${REPOSITORY}/releases/download"
+log() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*"; }
+fail() { log "ERROR: $*" >&2; exit 1; }
+[[ $EUID == 0 ]] || fail 'Run as root'
+release=production
+if (($#)); then
+  [[ $# == 2 && $1 == --commit && $2 =~ ^[0-9a-f]{40}$ ]] || fail 'Usage: deploy-everylotbot [--commit <full SHA>]'
+  release="app-$2"
+fi
+for command in curl jq sqlite3 sha256sum flock systemd-run; do
+  command -v "$command" >/dev/null || fail "Missing $command"
+done
+[[ -s $DATABASE && -r /etc/everylotbot.env ]] || fail 'Production state is missing'
+exec 9>>/run/lock/everylotbot-deploy.lock
+flock -n 9 || exit 0
+install -d -m 0755 "$ROOT" "$ROOT/releases"
+work=$(mktemp -d "$ROOT/.candidate.XXXXXX")
+shadow=''
+pointer=''
 cleanup() {
-  local exit_code=$?
-
-  if [[ -n "$pointer_temp" && -e "$pointer_temp" ]]; then
-    rm --force -- "$pointer_temp"
-  fi
-  if [[ "$timer_was_active" == true ]]; then
-    systemctl start "$BOT_TIMER" || true
-  fi
-
-  exit "$exit_code"
+  rm -rf -- "$work"
+  [[ -z $shadow ]] || rm -f -- "$shadow"
+  [[ -z $pointer ]] || rm -f -- "$pointer"
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM HUP
-
-while (($# > 0)); do
-  case "$1" in
-    --digest)
-      (($# >= 2)) || fail "--digest requires a value"
-      requested_digest="$2"
-      shift 2
-      ;;
-    --help|-h)
-      usage
-      exit 0
-      ;;
-    *)
-      usage >&2
-      fail "Unknown argument: $1"
-      ;;
-  esac
-done
-
-[[ $EUID -eq 0 ]] || fail "Run this deployer as root"
-for required_command in curl jq docker sqlite3 systemctl flock comm sort; do
-  command -v "$required_command" >/dev/null ||
-    fail "Required command is unavailable: $required_command"
-done
-[[ -r "$ENV_FILE" ]] || fail "Missing production environment file: $ENV_FILE"
-[[ -f "$DATABASE_PATH" ]] || fail "Database does not exist: $DATABASE_PATH"
-
-exec 9>"$LOCK_FILE"
-if ! flock --nonblock 9; then
-  log "Another deployment is already running; exiting"
-  exit 0
+status=$(curl --silent --show-error --location --proto '=https' --proto-redir '=https' \
+  --connect-timeout 15 --max-time 90 --max-filesize 16384 \
+  --output "$work/production.json" --write-out '%{http_code}' "$BASE/$release/production.json")
+if [[ $status == 404 && $release == production ]]; then
+  log 'No native production release published yet'; exit 0
 fi
-
-resolve_production_digest() {
-  local token headers digest
-
-  token="$(
-    curl --fail --silent --show-error --get \
-      --data-urlencode "scope=repository:${REGISTRY_REPOSITORY}:pull" \
-      "https://ghcr.io/token" |
-      jq --exit-status --raw-output '.token'
-  )"
-  headers="$(
-    curl --fail --silent --show-error --head \
-      --header "Authorization: Bearer ${token}" \
-      --header "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
-      "https://ghcr.io/v2/${REGISTRY_REPOSITORY}/manifests/${PRODUCTION_TAG}"
-  )"
-  digest="$(
-    awk 'tolower($1) == "docker-content-digest:" {
-      gsub("\r", "", $2)
-      print $2
-      exit
-    }' <<<"$headers"
-  )"
-  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
-    fail "GHCR returned an invalid production digest"
-  printf '%s\n' "$digest"
-}
-
-if [[ -n "$requested_digest" ]]; then
-  [[ "$requested_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
-    fail "Invalid digest: $requested_digest"
-  candidate_digest="$requested_digest"
+[[ $status == 200 ]] || fail "Manifest download returned HTTP $status"
+jq -e '.schema == 1 and .platform == "linux-x86_64" and
+  (.commit | type == "string" and test("^[0-9a-f]{40}$")) and
+  (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))' "$work/production.json" >/dev/null || fail 'Invalid release manifest'
+commit=$(jq -r .commit "$work/production.json")
+digest=$(jq -r .sha256 "$work/production.json")
+[[ $release == production || $release == "app-$commit" ]] || fail 'Commit does not match release'
+candidate="$ROOT/releases/$commit"
+if [[ $(readlink "$ROOT/current" || true) == "$candidate" ]]; then
+  [[ $(sha256sum "$candidate/everylotbot" | cut -d' ' -f1) == "$digest" ]] || fail 'Installed executable checksum changed'
+  log "Already deployed $commit"; exit 0
+fi
+free=$(df --output=avail -B1 "$ROOT" | tail -1 | tr -d ' ')
+((free > 256 * 1024 * 1024)) || fail 'Less than 256 MiB free for backup and validation'
+curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+  --connect-timeout 15 --max-time 180 --max-filesize 33554432 \
+  --output "$work/everylotbot" "$BASE/app-$commit/everylotbot-linux-x86_64"
+printf '%s  %s\n' "$digest" "$work/everylotbot" | sha256sum --check --status || fail 'Executable checksum mismatch'
+chmod 0755 "$work/everylotbot"
+# Serialize with all normal posts, including the old container during cutover.
+exec 8>>"$STATE/post.lock"
+flock --wait 1200 8
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+install -d -m 0700 "$STATE/deploy-backups" "$STATE/deployments"
+install -d -m 0750 -o ubuntu -g ubuntu "$STATE/deploy-shadow"
+backup="$STATE/deploy-backups/$stamp-$commit.sqlite3"
+shadow="$STATE/deploy-shadow/$stamp-$commit.sqlite3"
+before=$(sha256sum "$DATABASE" | cut -d' ' -f1)
+# The source connection is explicitly read-only; .backup writes a NEW file.
+sqlite3 -readonly "$DATABASE" '.timeout 30000' ".backup '$backup'"
+[[ $(sqlite3 -readonly "$backup" 'PRAGMA integrity_check;') == ok ]] || fail 'Backup integrity failed'
+cp -- "$backup" "$shadow"
+chown ubuntu:ubuntu "$shadow"
+chmod 0640 "$shadow"
+shadow_before=$(sha256sum "$shadow" | cut -d' ' -f1)
+chmod 0755 "$work"
+# No credentials or network are available to candidate validation. Systemd
+# additionally mounts all persistent state read-only for this transient unit.
+for action in audit post-next; do
+  args=("$action" --database "$shadow")
+  [[ $action != post-next ]] || args+=(--dry-run)
+  systemd-run --quiet --wait --pipe --collect \
+    --property=User=ubuntu --property=Group=ubuntu \
+    --property=WorkingDirectory=/ --property=PrivateNetwork=yes \
+    --property=ProtectSystem=strict --property=ProtectHome=yes \
+    --property=NoNewPrivileges=yes --property=PrivateTmp=yes \
+    --property=MemoryMax=64M --property=MemorySwapMax=0 \
+    --property=RuntimeMaxSec=120 --property=TasksMax=16 \
+    --setenv=DATABASE_PATH="$shadow" --setenv=PLATFORMS=bluesky \
+    "$work/everylotbot" "${args[@]}"
+done
+[[ $(sha256sum "$shadow" | cut -d' ' -f1) == "$shadow_before" ]] || fail 'Validation modified shadow data'
+[[ $(sha256sum "$DATABASE" | cut -d' ' -f1) == "$before" ]] || fail 'Live database changed during deployment; pointer untouched'
+if [[ -e $candidate ]]; then
+  [[ $(sha256sum "$candidate/everylotbot" | cut -d' ' -f1) == "$digest" ]] || fail 'Immutable release collision'
 else
-  candidate_digest="$(resolve_production_digest)"
+  install -d -m 0755 "$candidate"
+  install -m 0755 "$work/everylotbot" "$candidate/everylotbot"
+  install -m 0644 "$work/production.json" "$candidate/production.json"
 fi
-candidate_ref="${IMAGE_REPOSITORY}@${candidate_digest}"
-
-current_ref="$(
-  awk -F= '$1 == "EVERYLOTBOT_IMAGE" {
-    sub(/^EVERYLOTBOT_IMAGE=/, "")
-    print
-    exit
-  }' "$IMAGE_ENV_FILE" 2>/dev/null || true
-)"
-if [[ "$current_ref" == "$candidate_ref" ]]; then
-  log "Production already uses ${candidate_digest}"
-  exit 0
-fi
-
-free_bytes="$(df --output=avail --block-size=1 /var/lib/docker | awk 'NR == 2 { print $1 }')"
-[[ "$free_bytes" =~ ^[0-9]+$ ]] || fail "Could not determine free disk space"
-((free_bytes >= MINIMUM_FREE_BYTES)) ||
-  fail "Less than 2 GiB is free; refusing to pull"
-
-log "Pulling immutable candidate ${candidate_ref}"
-docker pull "$candidate_ref"
-
-candidate_arch="$(docker image inspect --format '{{.Architecture}}' "$candidate_ref")"
-candidate_os="$(docker image inspect --format '{{.Os}}' "$candidate_ref")"
-[[ "$candidate_os/$candidate_arch" == "linux/amd64" ]] ||
-  fail "Candidate platform is ${candidate_os}/${candidate_arch}, expected linux/amd64"
-candidate_commit="$(
-  docker image inspect \
-    --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
-    "$candidate_ref"
-)"
-[[ "$candidate_commit" =~ ^[0-9a-f]{40}$ ]] ||
-  fail "Candidate has an invalid Git revision label"
-
-if systemctl is-active --quiet "$BOT_TIMER"; then
-  timer_was_active=true
-fi
-systemctl stop "$BOT_TIMER"
-
-if systemctl is-active --quiet "$BOT_SERVICE"; then
-  log "${BOT_SERVICE} is running; deferring deployment"
-  exit 0
-fi
-
-install -d --mode=0750 --owner=root --group=root \
-  "$BACKUP_DIRECTORY" "$DEPLOYMENT_DIRECTORY"
-install -d --mode=0750 --owner=1000 --group=1000 "$SHADOW_DIRECTORY"
-
-deployed_at="$(date --utc +'%Y%m%dT%H%M%SZ')"
-backup_database="${BACKUP_DIRECTORY}/${deployed_at}-${candidate_digest#sha256:}.sqlite3"
-shadow_database="${SHADOW_DIRECTORY}/${deployed_at}-${candidate_digest#sha256:}.sqlite3"
-before_schema="${BACKUP_DIRECTORY}/${deployed_at}-schema-before.txt"
-after_schema="${BACKUP_DIRECTORY}/${deployed_at}-schema-after.txt"
-
-log "Creating a consistent SQLite backup at ${backup_database}"
-sqlite3 "$DATABASE_PATH" ".timeout 30000" ".backup '${backup_database}'"
-sqlite3 -readonly "$backup_database" "PRAGMA integrity_check;" |
-  grep --line-regexp --quiet ok || fail "Database backup failed its integrity check"
-sqlite3 -readonly "$backup_database" ".backup '${shadow_database}'"
-chown root:root "$backup_database"
-chown 1000:1000 "$shadow_database"
-chmod 0640 "$backup_database" "$shadow_database"
-
-schema_inventory() {
-  local database=$1
-  sqlite3 -readonly -separator '|' "$database" "
-    SELECT 'object', type, name, tbl_name
-    FROM sqlite_schema
-    WHERE type IN ('table', 'index')
-      AND name NOT LIKE 'sqlite_%'
-    UNION ALL
-    SELECT
-      'column',
-      schema.name,
-      columns.name,
-      coalesce(columns.type, '') || ':' ||
-        columns.\"notnull\" || ':' ||
-        columns.pk || ':' ||
-        coalesce(columns.dflt_value, '')
-    FROM sqlite_schema AS schema
-    JOIN pragma_table_info(schema.name) AS columns
-    WHERE schema.type = 'table'
-      AND schema.name NOT LIKE 'sqlite_%';
-  " | LC_ALL=C sort --unique
-}
-
-schema_inventory "$backup_database" >"$before_schema"
-
-container_args=(
-  --rm
-  --init
-  --user 1000:1000
-  --pids-limit 64
-  --memory 192m
-  --cap-drop ALL
-  --security-opt no-new-privileges
-  --read-only
-  --network none
-  --tmpfs "/tmp:rw,nosuid,nodev,size=64m"
-  --env-file "$ENV_FILE"
-  --env "DATABASE_PATH=/shadow/${shadow_database##*/}"
-  --env BLUESKY_SESSION_PATH=/tmp/bluesky-session.json
-  --volume "${SHADOW_DIRECTORY}:/shadow"
-)
-
-log "Applying candidate migrations to the disposable shadow database"
-docker run "${container_args[@]}" "$candidate_ref" \
-  node dist/src/cli/migrate.js --database "/shadow/${shadow_database##*/}"
-
-schema_inventory "$shadow_database" >"$after_schema"
-removed_schema="$(comm -23 "$before_schema" "$after_schema")"
-if [[ -n "$removed_schema" ]]; then
-  printf '%s\n' "$removed_schema" >&2
-  fail "Candidate removed or incompatibly changed existing schema"
-fi
-
-log "Auditing and dry-running the candidate against the shadow database"
-docker run "${container_args[@]}" "$candidate_ref" \
-  node dist/src/cli/audit.js --database "/shadow/${shadow_database##*/}"
-docker run "${container_args[@]}" "$candidate_ref" \
-  node dist/src/cli/post-next.js --database "/shadow/${shadow_database##*/}" --dry-run
-
-rm --force -- "$shadow_database"
-
-write_image_pointer() {
-  local image_ref=$1
-  pointer_temp="$(mktemp "${IMAGE_ENV_FILE}.XXXXXX")"
-  printf 'EVERYLOTBOT_IMAGE=%s\n' "$image_ref" >"$pointer_temp"
-  chown root:root "$pointer_temp"
-  chmod 0600 "$pointer_temp"
-  mv --force -- "$pointer_temp" "$IMAGE_ENV_FILE"
-  pointer_temp=""
-}
-
-previous_ref="$current_ref"
-write_image_pointer "$candidate_ref"
-
-metadata_file="${DEPLOYMENT_DIRECTORY}/${deployed_at}.env"
-{
-  printf 'DEPLOYED_AT=%s\n' "$deployed_at"
-  printf 'COMMIT=%s\n' "$candidate_commit"
-  printf 'DIGEST=%s\n' "$candidate_digest"
-  printf 'PREVIOUS_IMAGE=%s\n' "$previous_ref"
-  printf 'DATABASE_BACKUP=%s\n' "$backup_database"
-} >"$metadata_file"
-chmod 0640 "$metadata_file"
-
-candidate_id="$(docker image inspect --format '{{.Id}}' "$candidate_ref")"
-previous_id=""
-if [[ -n "$previous_ref" ]]; then
-  previous_id="$(docker image inspect --format '{{.Id}}' "$previous_ref" 2>/dev/null || true)"
-fi
-
-while IFS='|' read -r repository tag digest image_id; do
-  [[ "$repository" == "$IMAGE_REPOSITORY" ]] || continue
-  [[ "$image_id" == "$candidate_id" || "$image_id" == "$previous_id" ]] && continue
-  if [[ "$tag" != "<none>" ]]; then
-    old_ref="${repository}:${tag}"
-  elif [[ "$digest" != "<none>" ]]; then
-    old_ref="${repository}@${digest}"
-  else
-    continue
-  fi
-  docker image rm "$old_ref" ||
-    log "Could not remove old image ${old_ref}; leaving it in place"
-done < <(
-  docker image ls --no-trunc --digests \
-    --format '{{.Repository}}|{{.Tag}}|{{.Digest}}|{{.ID}}'
-)
-
-log "Deployment succeeded: commit=${candidate_commit} digest=${candidate_digest}"
+previous=$(readlink "$ROOT/current" || true)
+# mv replaces the symlink atomically; a running executable remains valid.
+pointer="$ROOT/.current-$stamp-$$"
+ln -s "$candidate" "$pointer"
+mv -Tf "$pointer" "$ROOT/current"
+pointer=''
+jq --arg previous "$previous" --arg backup "$backup" --arg database_sha256 "$before" \
+  '. + {previous: $previous, backup: $backup, database_sha256: $database_sha256}' \
+  "$work/production.json" >"$STATE/deployments/$stamp-$commit.json"
+log "Deployed $commit; database unchanged ($before); previous=$previous"

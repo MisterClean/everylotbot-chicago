@@ -1,0 +1,36 @@
+[Unit]
+Description=Petit shared bot scheduler (Bikeshare and EveryLot)
+Wants=network-online.target chicago-bikeshare-bot.service
+After=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/var/lib/divvy-bot
+EnvironmentFile=/etc/divvy-bot.env
+Environment=DB_PATH=/var/lib/divvy-bot/bot.sqlite3
+Environment=RUST_LOG=info
+ExecStartPre=/opt/chicago-bikeshare-bot/current/deploy/petit-recover.py
+ExecStartPre=-/opt/chicago-bikeshare-bot/current/deploy/run-bot catch-up
+ExecStart=/opt/petit-bots/pt run /etc/petit-bots/jobs --db /var/lib/petit-chicago-bikeshare-bot/history.sqlite3 -j 2 -t 1
+Restart=on-failure
+RestartSec=60
+KillSignal=SIGINT
+KillMode=control-group
+TimeoutStartSec=1600
+TimeoutStopSec=1600
+MemoryMax=96M
+MemorySwapMax=0
+TasksMax=48
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/divvy-bot /var/lib/petit-chicago-bikeshare-bot /var/log/chicago-bikeshare-bot /var/lib/everylotbot /var/log/everylotbot /home/ubuntu/bots/everylotbot-chicago
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
