@@ -24,3 +24,6 @@ var/
 *.sqlite3
 *.sqlite-journal
 *.db-journal
+
+__pycache__/
+*.py[cod]

@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Set up Rust
-        run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
       - name: Formatting and lint
         run: |
           cargo fmt --all -- --check
