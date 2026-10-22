@@ -25,7 +25,7 @@ pub fn valid_key(key: &str) -> bool {
 pub fn new_key() -> Result<String> {
     let micros = u64::try_from(chrono::Utc::now().timestamp_micros())?;
     let last = LAST_MICROS
-        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |last| {
+        .try_update(Ordering::SeqCst, Ordering::SeqCst, |last| {
             Some(micros.max(last + 1))
         })
         .map_err(|_| anyhow!("Cannot generate record timestamp"))?;
