@@ -34,7 +34,7 @@ jobs:
           jq -e --arg commit "$COMMIT" '.schema == 1 and .platform == "linux-x86_64" and .commit == $commit and (.sha256 | test("^[0-9a-f]{64}$"))' native/production.json
           printf '%s  %s\n' "$(jq -r .sha256 native/production.json)" native/everylotbot-linux-x86_64 | sha256sum -c
       - name: Attest native executable provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: native/everylotbot-linux-x86_64
       - name: Publish immutable release and promote latest main
